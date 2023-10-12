@@ -8,8 +8,9 @@
    이 함수는 Parameter로 주어진 페이지를 Anon, File, Page_Cache 타입에 맞는 페이지 Object로 초기화한 뒤,
    vm_alloc_page_with_initializer()에서 전달된 callback을 호출하며 종료됨. */
 
-#include "vm/uninit.h"
 #include "vm/vm.h"
+
+#include "vm/uninit.h"
 
 static bool uninit_initialize(struct page *page, void *kva);
 static void uninit_destroy(struct page *page);

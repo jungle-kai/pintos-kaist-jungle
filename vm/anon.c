@@ -1,7 +1,8 @@
 /* anon.c: Implementation of page for non-disk image (a.k.a. anonymous page). */
 
-#include "devices/disk.h"
 #include "vm/vm.h"
+
+#include "devices/disk.h"
 
 /* DO NOT MODIFY BELOW LINE */
 static struct disk *swap_disk;
