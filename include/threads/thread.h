@@ -1,16 +1,20 @@
+// clang-format off
 #ifndef THREADS_THREAD_H
 #define THREADS_THREAD_H
 
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
-
+#include <hash.h> // SPT 해시테이블을 위해서 추가
 #include "threads/interrupt.h"
 #include "threads/synch.h" // fd_lock을 스레드마다 구현하기 위함
+
+// #define VM
 
 #ifdef VM
 #include "vm/vm.h"
 #endif
+// clang-format on
 
 /* States in a thread's life cycle. */
 enum thread_status {
@@ -108,10 +112,12 @@ struct thread {
 
     struct list_elem elem; /* 원래 포함되어 있는, 가장 기본적인 thread elem */
 
-    // #ifdef USERPROG
+#ifdef USERPROG
 
     /* 기본적으로 포함되어있는 멤버 */
     uint64_t *pml4; /* Page map level 4 */
+
+#endif
 
     /* File Descriptor 관리를 위한 멤버 */
     struct lock fd_lock;    // Allocate_fd()에서 사용되는 락, per thread
@@ -130,14 +136,13 @@ struct thread {
 
     int exit_status;     // 프로세스 종료시 exit status 코드 저장
     bool already_waited; // 해당 child에 대한 process_wait()이 이미 호출되었다면 true (False로 init 필요)
-    int fork_depth;  // 포크 얼마나 했는지 알아야 함
+    int fork_depth;      // 포크 얼마나 했는지 알아야 함
 
-    
-
-    // #endif
 #ifdef VM
+
     /* Table for whole virtual memory owned by thread. */
     struct supplemental_page_table spt;
+
 #endif
 
     /* Owned by thread.c. */

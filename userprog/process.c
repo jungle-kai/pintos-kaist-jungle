@@ -1,3 +1,4 @@
+// clang-format on// #define VM
 #include "userprog/process.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
@@ -15,14 +16,17 @@
 #include "userprog/syscall.h" // fd_table_destroy를 위한 추가
 #include "userprog/tss.h"
 #include <debug.h>
+#include <hash.h> // SPT 해시테이블을 위해서 추가
 #include <inttypes.h>
 #include <round.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+// #define VM
 #ifdef VM
 #include "vm/vm.h"
 #endif
+// clang-format off
 
 /* 기본적인 함수 Prototype */
 static void process_cleanup(void);
@@ -657,6 +661,10 @@ static bool validate_segment(const struct Phdr *phdr, struct file *file) {
     return true;
 }
 
+////////////////////////////////////////////////////////////////////////////////
+/////////////////////////// IF NOT VM (USERPROG) ///////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
 #ifndef VM // 아래 load_segment(), install_page(), setup_stack()은 Project 2에서만 사용
 
 /* load_segment() 보조 함수 Prototype */
@@ -748,10 +756,11 @@ static bool install_page(void *upage, void *kpage, bool writable) {
      * address, then map our page there. */
     return (pml4_get_page(t->pml4, upage) == NULL && pml4_set_page(t->pml4, upage, kpage, writable));
 }
+
 #else
 
 ////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////// Project 3 ++ /////////////////////////////////
+////////////////////////////// IF VM (PROJECT 3) ///////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
 /* From here, codes will be used after project 3.
@@ -815,4 +824,5 @@ static bool setup_stack(struct intr_frame *if_) {
 
     return success;
 }
+
 #endif /* VM */

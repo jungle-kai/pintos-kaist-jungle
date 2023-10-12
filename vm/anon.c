@@ -1,8 +1,12 @@
 /* anon.c: Implementation of page for non-disk image (a.k.a. anonymous page). */
 
+// clang-format off
 #include "vm/vm.h"
-
 #include "devices/disk.h"
+#include <hash.h> // SPT 해시테이블을 위해서 추가
+
+// #define VM
+// clang-format on
 
 /* DO NOT MODIFY BELOW LINE */
 static struct disk *swap_disk;
@@ -20,6 +24,7 @@ static const struct page_operations anon_ops = {
 
 /* Initialize the data for anonymous pages */
 void vm_anon_init(void) {
+
     /* Anonymous Page의 데이터를 채워주는 초기화 함수 ; vm_init()에서 호출됨 */
 
     /* TODO: Set up the swap_disk. @@@@@@@@@@ */

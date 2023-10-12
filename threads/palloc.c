@@ -1,3 +1,4 @@
+// clang-format off
 #include "threads/palloc.h"
 #include "threads/init.h"
 #include "threads/loader.h"
@@ -11,6 +12,10 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <hash.h> // SPT 해시테이블을 위해서 추가
+
+// #define VM
+// clang-format on
 
 /* Page allocator.  Hands out memory in page-size (or
    page-multiple) chunks.  See malloc.h for an allocator that

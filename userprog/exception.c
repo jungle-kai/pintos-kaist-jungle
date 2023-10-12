@@ -1,3 +1,4 @@
+// clang-format off
 #include "userprog/exception.h"
 #include "intrinsic.h"
 #include "threads/interrupt.h"
@@ -7,6 +8,8 @@
 #include "userprog/syscall.h"
 #include <inttypes.h>
 #include <stdio.h>
+// #define VM
+// clang-format on
 
 /* 시스템이 처리한 Page Fault 숫자를 기록 */
 static long long page_fault_cnt;
@@ -118,7 +121,7 @@ static void page_fault(struct intr_frame *f) {
 #endif
 
     /* 발생한 Page Fault의 숫자를 증감 (통계 관리 목적) */
-    page_fault_cnt++;  
+    page_fault_cnt++;
     exit(-1);
     /* 만일 Fault가 진짜 에러로 발생한 Fault라면, 관련 정보를 보여주고 프로세스를 종료. */
     // printf("Page fault at %p: %s error %s page in %s context.\n", fault_addr, not_present ? "not present" : "rights violation", write ? "writing" : "reading", user ? "user" : "kernel");

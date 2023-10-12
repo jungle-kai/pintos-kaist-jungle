@@ -56,6 +56,12 @@
         "interrupt.h": "c",
         "directory.h": "c",
         "list.h": "c",
-        "intrinsic.h": "c"
+        "intrinsic.h": "c",
+        "vm.h": "c",
+        "hash.h": "c",
+        "malloc.h": "c",
+        "flags.h": "c",
+        "init.h": "c",
+        "random.h": "c"
     }
 }

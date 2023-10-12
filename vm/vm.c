@@ -1,10 +1,13 @@
 /* vm.c: Generic interface for virtual memory objects. */
 
+// clang-format off
 #include "threads/malloc.h"
-
 #include "vm/vm.h"
-
 #include "vm/inspect.h"
+#include <hash.h> // SPT 해시테이블을 위해서 추가
+
+// #define VM
+// clang-format on
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's intialize codes. */
 void vm_init(void) {
@@ -176,6 +179,22 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
     /* @@@@@@@@@@ TODO: Validate the fault @@@@@@@@@@ */
     /* @@@@@@@@@@ TODO: Your code goes here @@@@@@@@@@ */
 
+    /* (1) Locate the page that faulted in the supplemental page table.
+       If the memory reference is valid, use the supplemental page table entry to locate the data that goes in the page,
+       which might be in the file system, or in a swap slot, or it might simply be an all-zero page.
+       If you implement sharing (i.e., Copy-on-Write), the page's data might even already be in a page frame, but not in the page table.
+       If the supplemental page table indicates that the user process should not expect any data at the address it was trying to access,
+       or if the page lies within kernel virtual memory, or if the access is an attempt to write to a read-only page,
+       then the access is invalid. Any invalid access terminates the process and thereby frees all of its resources.
+
+       (2) Obtain a frame to store the page. If you implement sharing, the data you need may already be in a frame,
+       in which case you must be able to locate that frame.
+
+       (3) Fetch the data into the frame, by reading it from the file system or swap, zeroing it, etc.
+       If you implement sharing, the page you need may already be in a frame, in which case no action is necessary in this step.
+
+       (4) Point the page table entry for the faulting virtual address to the physical page. You can use the functions in threads/mmu.c. */
+
     return vm_do_claim_page(page);
 }
 
@@ -224,6 +243,15 @@ void supplemental_page_table_init(struct supplemental_page_table *spt UNUSED) {
     /*  */
 
     /* @@@@@@@@@@ TODO @@@@@@@@@@ */
+
+    /* You may organize the supplemental page table as you wish.
+       There are at least two basic approaches to its organization: in terms of segments or in terms of pages.
+
+       A segment here refers to a consecutive group of pages, i.e., memory region containing an executable or a memory-mapped file.
+
+       Optionally, you may use the page table itself to track the members of the supplemental page table.
+       You will have to modify the Pintos page table implementation in threads/mmu.c to do so.
+       We recommend this approach for advanced students only. */
 }
 
 /* Copy supplemental page table from src to dst */

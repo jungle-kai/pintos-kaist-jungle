@@ -1,6 +1,11 @@
 /* file.c: Implementation of memory backed file object (mmaped object). */
 
+// clang-format off
 #include "vm/vm.h"
+#include <hash.h> // SPT 해시테이블을 위해서 추가
+
+// #define VM
+// clang-format on
 
 static bool file_backed_swap_in(struct page *page, void *kva);
 static bool file_backed_swap_out(struct page *page);

@@ -1,3 +1,4 @@
+// clang-format off
 #include "threads/thread.h"
 #include "filesys/filesys.h" // 추가
 #include "intrinsic.h"
@@ -8,13 +9,17 @@
 #include "threads/synch.h"
 #include "threads/vaddr.h"
 #include <debug.h>
+#include <hash.h> // SPT 해시테이블을 위해서 추가
 #include <random.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+
+// #define VM
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
+// clang-format on
 
 /* 기본적인 Declaration & Macro */
 
@@ -156,7 +161,7 @@ tid_t thread_create(const char *name, int priority, thread_func *function, void 
     /* 스레드 생성 시점부터 parent의 children list에 바로 추가 */
     list_push_back(&thread_current()->children_list, &t->child_elem); // 부모 스레드의 children_list에 자식 스레드를 추가
     t->parent_is = thread_current();
-    t->fork_depth = t->parent_is->fork_depth+1;
+    t->fork_depth = t->parent_is->fork_depth + 1;
 
     // #endif
 
