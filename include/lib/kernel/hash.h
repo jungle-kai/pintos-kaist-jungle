@@ -20,10 +20,12 @@
  * linked list implementation.  Refer to lib/kernel/list.h for a
  * detailed explanation. */
 
+// clang-format off
 #include "list.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+// clang-format on
 
 /* Hash element. */
 struct hash_elem {

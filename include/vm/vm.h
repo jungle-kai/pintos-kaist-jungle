@@ -3,6 +3,7 @@
 #define VM_VM_H
 #include <stdbool.h>
 #include <hash.h> // SPT 해시테이블을 위해서 추가
+#include <list.h> // list 관련 추가
 #include "threads/palloc.h"
 // clang-format on
 
@@ -20,7 +21,7 @@ enum vm_type {
 
     /* Auxillary bit flag marker for store information. You can add more
      * markers, until the value is fit in the int. */
-    VM_MARKER_0 = (1 << 3),
+    VM_MARKER_0 = (1 << 3), // Stack 마커로 정의
     VM_MARKER_1 = (1 << 4),
 
     /* DO NOT EXCEED THIS VALUE. */
@@ -80,6 +81,39 @@ struct page_operations {
     enum vm_type type;
 };
 
+////////////////////////////////////////////////////////////////////////////////
+//////////////////////// 직접 추가한 데이터 구조체 (3+1종) ////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+// #1 : lazy_load를 위해 필요한 데이터를 저장
+struct lazy_load_aux {
+    struct file *file;
+    off_t ofs;
+    uint32_t read_bytes;
+    uint32_t zero_bytes;
+};
+
+// #2 : 물리 메모리 로딩된 내역을 확인하기 위해서 (TODO: THIS IS A TEMPORARY DRAFT)
+struct frame_table {
+    struct list *frame_table_list;
+    size_t size; // 시스템의 Frame 전체 숫자, 필요 없을수도 있음 (palloc 건드려서 넣기? spt / pt 넣는건?)
+};
+
+// #3 : frame_table_list에 들어가는 구조체
+struct frame_table_entry {
+    struct frame *frame;  // 각각의 프레임을 향하는 포인터
+    struct thread *owner; // 보유한 스레드를 향하는 포인터
+    bool in_use;          // 현재 사용중인지 기록
+    struct list_elem frame_table_list_elem;
+};
+
+// #4 : 글로벌 선언
+struct frame_table frame_table;
+
+////////////////////////////////////////////////////////////////////////////////
+//////////////////////////// 직접 추가한 데이터 구조체 끝 /////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
 #define swap_in(page, v) (page)->operations->swap_in((page), v)
 #define swap_out(page) (page)->operations->swap_out(page)
 #define destroy(page)                                                                                                                                                                                  \
@@ -109,5 +143,8 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
 void vm_dealloc_page(struct page *page);
 bool vm_claim_page(void *va);
 enum vm_type page_get_type(struct page *page);
+
+uint64_t page_hash_func(const struct hash_elem *e, void *aux UNUSED);
+bool page_less_func(const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED);
 
 #endif /* VM_VM_H */
