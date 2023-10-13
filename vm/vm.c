@@ -237,6 +237,10 @@ static bool vm_do_claim_page(struct page *page) {
     return swap_in(page, frame->kva);
 }
 
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////// Supplemental Page Table /////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
 /* Initialize new supplemental page table */
 void supplemental_page_table_init(struct supplemental_page_table *spt UNUSED) {
 
@@ -268,4 +272,23 @@ void supplemental_page_table_kill(struct supplemental_page_table *spt UNUSED) {
     /* SPT에 속한 페이지를 전부 삭제하고, 수정된 컨텐츠들을 디스크에 다시 저장하는 함수. */
 
     /* @@@@@@@@@@ TODO: Destroy all the SPT held by the current thread and writeback all the modified contents to the storage @@@@@@@@@@ */
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//////////////////////////// Hashtable Functions ///////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+uint64_t hash_hash_func(const struct hash_elem *e, void *aux UNUSED) {
+    const struct page *p = hash_entry(e, struct page, spt_hash_elem);
+    return hash_bytes(&p->va, sizeof p->va);
+}
+
+/* Compares the value of two hash elements A and B, given
+ * auxiliary data AUX.  Returns true if A is less than B, or
+ * false if A is greater than or equal to B. */
+bool hash_less_func(const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED) {
+    const struct page *aa = hash_entry(a, struct page, spt_hash_elem);
+    const struct page *bb = hash_entry(b, struct page, spt_hash_elem);
+
+    return aa->va < bb->va;
 }

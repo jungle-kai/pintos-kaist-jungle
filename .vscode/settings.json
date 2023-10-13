@@ -62,6 +62,7 @@
         "malloc.h": "c",
         "flags.h": "c",
         "init.h": "c",
-        "random.h": "c"
+        "random.h": "c",
+        "debug.h": "c"
     }
 }
