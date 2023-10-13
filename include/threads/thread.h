@@ -9,7 +9,7 @@
 #include "threads/interrupt.h"
 #include "threads/synch.h" // fd_lock을 스레드마다 구현하기 위함
 
-// #define VM
+#define VM
 
 #ifdef VM
 #include "vm/vm.h"

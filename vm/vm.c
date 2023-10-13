@@ -244,18 +244,16 @@ static bool vm_do_claim_page(struct page *page) {
 /* Initialize new supplemental page table */
 void supplemental_page_table_init(struct supplemental_page_table *spt UNUSED) {
 
-    /*  */
+    /* SPT를 초기화하는 함수 (thread->spt && page->spt_hash_elem) ; page method */
 
     /* @@@@@@@@@@ TODO @@@@@@@@@@ */
+
+    hash_init(thread_current()->spt->spt_hash_table, );
 
     /* You may organize the supplemental page table as you wish.
        There are at least two basic approaches to its organization: in terms of segments or in terms of pages.
 
-       A segment here refers to a consecutive group of pages, i.e., memory region containing an executable or a memory-mapped file.
-
-       Optionally, you may use the page table itself to track the members of the supplemental page table.
-       You will have to modify the Pintos page table implementation in threads/mmu.c to do so.
-       We recommend this approach for advanced students only. */
+       A segment here refers to a consecutive group of pages, i.e., memory region containing an executable or a memory-mapped file. */
 }
 
 /* Copy supplemental page table from src to dst */
