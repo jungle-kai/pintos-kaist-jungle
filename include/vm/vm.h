@@ -2,6 +2,7 @@
 #ifndef VM_VM_H
 #define VM_VM_H
 #include <stdbool.h>
+#include <hash.h> // SPT 해시테이블을 위해서 추가
 #include "threads/palloc.h"
 // clang-format on
 
@@ -57,7 +58,8 @@ struct page {
     void *va;            /* Address in terms of user space */ /* 유저 공간의 가상페이지 시작주소*/
     struct frame *frame; /* Back reference for frame */ /* 페이지와 연결된 프레임 */
 
-    /* Your implementation */
+    /* 구현 영역 */
+    struct hash_elem spt_hash_elem;
 
     /* Per-type data are binded into the union.
      * Each function automatically detects the current union */
