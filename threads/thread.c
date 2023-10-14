@@ -15,6 +15,10 @@
 #include <stdio.h>
 #include <string.h>
 
+// vm 관련
+#include "lib/kernel/hash.h"
+#include "vm/vm.h"
+
 // #define VM
 #ifdef USERPROG
 #include "userprog/process.h"

@@ -20,6 +20,7 @@ static bool uninit_initialize(struct page *page, void *kva);
 static void uninit_destroy(struct page *page);
 
 /* DO NOT MODIFY this struct */
+/* 이 구조체 변형 금지 */
 static const struct page_operations uninit_ops = {
     .swap_in = uninit_initialize,
     .swap_out = NULL,
@@ -28,6 +29,8 @@ static const struct page_operations uninit_ops = {
 };
 
 /* DO NOT MODIFY this function */
+/* 이 함수 변형 금지 
+	인자: [페이지, 가상주소, 초기자, 페이지 타입, 초기자의 인자, 초기화 함수]*/
 void uninit_new(struct page *page, void *va, vm_initializer *init, enum vm_type type, void *aux, bool (*initializer)(struct page *, enum vm_type, void *)) {
 
     /* 새로운 Uninit 페이지를 초기화하는 함수로, 프로그램/커널에 의한 첫 접근이 있어야 작업이 마무리 됨.
@@ -35,9 +38,13 @@ void uninit_new(struct page *page, void *va, vm_initializer *init, enum vm_type 
 
     ASSERT(page != NULL);
 
-    *page = (struct page){.operations = &uninit_ops,
-                          .va = va,
-                          .frame = NULL, /* no frame for now */
+   // 페이지 생성
+    *page = (struct page){.operations = &uninit_ops, /* operation: uninit specific한 ops 할당 */
+                          .va = va, // 가상페이지의 시작주소
+                          .frame = NULL, /* no frame for now */ /* 페이지 처음 생성시엔 연결된 프레임 없음 */
+                          
+                          /* page 구조체의 union 타입 부분.
+		                  	union 영역을 uninit_page 구조체가 차지함 */
                           .uninit = (struct uninit_page){
                               .init = init,
                               .type = type,
@@ -47,6 +54,7 @@ void uninit_new(struct page *page, void *va, vm_initializer *init, enum vm_type 
 }
 
 /* Initalize the page on first fault */
+/* 첫 page fault가 발생하면 uninit_initialize() 호출됨 */
 static bool uninit_initialize(struct page *page, void *kva) {
 
     /* Uninit_new()로 생성된 페이지에 최초로 PageFault 발생 시 핸들러가 호출하는 함수.
@@ -56,12 +64,15 @@ static bool uninit_initialize(struct page *page, void *kva) {
     struct uninit_page *uninit = &page->uninit;
 
     /* Fetch first, page_initialize may overwrite the values */
+    /* uninit_new()로 페이지 생성할 때 넣었던 vm_initializer를 받아옴 */
     vm_initializer *init = uninit->init;
     void *aux = uninit->aux;
 
     /* @@@@@@@@@@ TODO: You may need to fix this function. @@@@@@@@@@ */
 
-    return uninit->page_initializer(page, uninit->type, kva) && (init ? init(page, aux) : true);
+      // 일단 페이지 타입 별 초기화(page_initializer) 해주고, lazy_load_segment에 해당하는 init() 함수 호출
+   bool res = uninit->page_initializer(page, uninit->type, kva) && (init ? init(page, aux) : true); 
+   return res;
 }
 
 /* Free the resources hold by uninit_page. Although most of pages are transmuted

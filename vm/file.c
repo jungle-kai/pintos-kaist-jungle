@@ -1,4 +1,5 @@
 /* file.c: Implementation of memory backed file object (mmaped object). */
+/* memory backed file 개체 구현 파일file.c */
 
 // clang-format off
 #include "vm/vm.h"
@@ -20,6 +21,7 @@ static const struct page_operations file_ops = {
 };
 
 /* The initializer of file vm */
+/* file vm 초기화 함수 */
 void vm_file_init(void) {
 
     /* File 전용 페이지에 Data를 채워서 초기화 해주는 함수 */
@@ -28,6 +30,7 @@ void vm_file_init(void) {
 }
 
 /* Initialize the file backed page */
+/* file backed page 초기화 */
 bool file_backed_initializer(struct page *page, enum vm_type type, void *kva) {
 
     /* File-backed 페이지를 초기화 하는 전용 함수.
@@ -40,6 +43,7 @@ bool file_backed_initializer(struct page *page, enum vm_type type, void *kva) {
 }
 
 /* Swap in the page by read contents from the file. */
+/* 파일을 swap in 시켜줌 */
 static bool file_backed_swap_in(struct page *page, void *kva) {
 
     /* 파일에서 데이터를 읽어온 뒤 해당 해당 페이지를 DRAM에 로딩하는 함수. */
@@ -50,6 +54,7 @@ static bool file_backed_swap_in(struct page *page, void *kva) {
 }
 
 /* Swap out the page by writeback contents to the file. */
+/* 파일을 swap out함 */
 static bool file_backed_swap_out(struct page *page) {
 
     /* DRAM에서 해당 페이지를 제거한 뒤 디스크에 변경사항을 저장하는 함수. */
@@ -60,6 +65,7 @@ static bool file_backed_swap_out(struct page *page) {
 }
 
 /* Destory the file backed page. PAGE will be freed by the caller. */
+/* 파일을 destory함 */
 static void file_backed_destroy(struct page *page) {
 
     /* File-backed 페이지와 관련된 리소스를 전부 Free해주는 함수. 파일을 닫는 등의 행위도 일어나야 함. */
@@ -70,6 +76,7 @@ static void file_backed_destroy(struct page *page) {
 }
 
 /* Do the mmap */
+/* mmap 함수 구현 */
 void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t offset) {
 
     /* 파일을 메모리에 매핑하는 함수. 유저의 VA, 바이트 크기, Write 가능여부, 파일 포인터, 그리고 Offset을 활용. */
@@ -78,6 +85,7 @@ void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t 
 }
 
 /* Do the munmap */
+/* munmap 함수 구현 */
 void do_munmap(void *addr) {
 
     /* do_mmap의 카운터. */

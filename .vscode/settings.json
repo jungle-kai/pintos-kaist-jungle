@@ -63,5 +63,6 @@
         "flags.h": "c",
         "init.h": "c",
         "random.h": "c"
-    }
+    },
+    "C_Cpp.default.defines": ["USERPROG", "VM"]
 }

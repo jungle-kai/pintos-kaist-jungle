@@ -157,6 +157,7 @@ static void paging_init(uint64_t mem_end) {
         if ((uint64_t)&start <= va && va < (uint64_t)&_end_kernel_text)
             perm &= ~PTE_W;
 
+        // pa -> va, pml4에 va 통로 뚫어주기, pml4e_walk()의 반환값 = unit64_t* pte, *pte 해서 pte 넣어줄 수 있음.
         if ((pte = pml4e_walk(pml4, va, 1)) != NULL)
             *pte = pa | perm;
     }

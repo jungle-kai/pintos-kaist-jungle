@@ -94,8 +94,10 @@ pml4e_walk (uint64_t *pml4e, const uint64_t va, int create) {
  * allocation fails. */
 uint64_t *
 pml4_create (void) {
-	uint64_t *pml4 = palloc_get_page (0);
-	if (pml4)
+	// 물리 메모리로부터 페이지 하나 할당받음(커널풀에서 받음)
+	uint64_t *pml4 = palloc_get_page (0); 
+	if (pml4) // 할당 성공하면,
+		// base_pml4는 pml4의 시작위치고, base_pml4 테이블 데이터 전부 새 pml4에 복사
 		memcpy (pml4, base_pml4, PGSIZE);
 	return pml4;
 }
@@ -214,6 +216,7 @@ void *
 pml4_get_page (uint64_t *pml4, const void *uaddr) {
 	ASSERT (is_user_vaddr (uaddr));
 
+	// user virtual address에 대응하는 physical address(페이지 테이블 엔트리) 반환 
 	uint64_t *pte = pml4e_walk (pml4, (uint64_t) uaddr, 0);
 
 	if (pte && (*pte & PTE_P))
@@ -229,6 +232,10 @@ pml4_get_page (uint64_t *pml4, const void *uaddr) {
  * otherwise it is read-only.
  * Returns true if successful, false if memory allocation
  * failed. */
+
+/* 유저의 가상주소(유저 가상페이지)와 물리주소(kva는 물리주소로 바꿔 사용)을 매핑해줌
+	유저 가상페이지를 mmu에 넣어 뚫어준 후, pte에 물리주소 삽입
+	create = 1이라서, 물리페이지 없으면 생성함*/
 bool
 pml4_set_page (uint64_t *pml4, void *upage, void *kpage, bool rw) {
 	ASSERT (pg_ofs (upage) == 0);
