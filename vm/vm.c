@@ -273,8 +273,10 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
     // stack 생각, stack overflow 생각, stack이랑 멀리 떨어졌을 경우, code segment 접근 경우
     // ->  
 
-    /* 2. 유효하다면, fault발생된 addr 가상 주소를 가지고 spt에 접근해서 page 구조체를 구한다. */ 
+    /* 2. 유효하다면, fault발생된 addr 가상 주소를 가지고 spt에 접근해서 page 구조체를 구한다. */
+    // printf("페이지폴트 주소!!: %p\n", addr); 
     addr = pg_round_down(addr);
+    // printf("ROUNDED 페이지폴트 주소!!: %p\n", addr); 
     
     page = spt_find_page(spt, addr);
 
@@ -433,17 +435,64 @@ void supplemental_page_table_init(struct supplemental_page_table *spt UNUSED) {
 
 /* Copy supplemental page table from src to dst */
 bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED, struct supplemental_page_table *src UNUSED) {
-    return true;
-    // dst->hash.
-    // dst->hash.aux = NULL;
-    // if (src && dst) { // valid check 필요
-	// 			memcpy(dst, src, PGSIZE);
-	// 			return true;
-	// 		}
-	// 		return false;
-    // /*  */
+//     dst->hash.elem_cnt = src->hash.elem_cnt;
 
-    /* @@@@@@@@@@ TODO @@@@@@@@@@ */
+//     struct hash_iterator i;
+//     bool result = true;
+//    hash_first (&i, &src->hash);
+
+//    while (hash_next (&i)) {
+//         // 부모 page 구조체 얻음
+//         struct page *parent_page = hash_entry (i.elem, struct page, spt_hash_elem);
+
+//         // 새 page 만듬
+//         struct page* new_page = (struct page*)calloc(1, sizeof(struct page));
+
+//         // 새 page 초기화
+//         uninit_new(new_page, parent_page->va, parent_page->uninit.init, parent_page->uninit.type, parent_page->uninit.aux, parent_page->uninit.page_initializer);
+
+    
+//         // frame이 NULL이 아닐 때, 부모쪽 프레임과 연결된 물리메모리 데이터를 자식에도 할당해서 복사해줌
+//         if (parent_page->frame != NULL) {
+//             // 일단 frame 얻기
+//             struct frame* new_frame = vm_get_frame();
+
+//             if (new_frame == NULL) {
+//                 return false;
+//             }
+
+//             // frame과 page 연결
+//             new_page->frame = new_frame;
+//             new_frame->page = new_page;
+
+//             // 페이지 초기화
+//             new_page->uninit.page_initializer(new_page, new_page->uninit.type, new_frame->kva);
+
+//             // 부모의 frame으로부터 kva 구한 후, kva에서 PGSIZE만큼 복사
+//             memcpy(parent_page->frame->kva, new_frame->kva, PGSIZE);
+
+//             // 페이지 테이블에 등록
+//             // install_page에 writable을 넣어주어야 함
+//             install_page(new_page->va, new_frame->kva, );
+//             // // vm_do_claim_page(): page를 넣으면, frame을 만들고 연결시키고 lazy_loading까지 해주는 함수.
+//             // if (!vm_do_claim_page(new_page)) {
+//             //     printf("spt cpy: 페이지-프레임 연결실패!\n");
+//             //     return false;
+//             // }  
+
+//             // vm_do_claim_page()가 성공했으면 이후에 해줄거 없음.
+//         }
+
+//         // 다 했으면 이제 dst에 새 page넣기
+//         if (!spt_insert_page(dst, new_page)) {
+//             printf("spt cpy: spt 새페이지 insert 실패!\n");
+//             return false;
+//         }
+//     }
+
+//     printf("sptcpy: 성공!\n");
+    return true;
+
 }
 
 /* Free the resource hold by the supplemental page table */
