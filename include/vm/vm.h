@@ -62,7 +62,12 @@ struct page {
     /* Per-type data are binded into the union.
      * Each function automatically detects the current union */
     /* 유니온 영역은 4개 페이지 구조체 중 하나가 된다 */
+
+    /***** 추가한 필드 *****/
     struct hash_elem spt_hash_elem;
+    bool writable;
+    /***** 추가한 필드 *****/
+    
     union {
         struct uninit_page uninit; // 페이지가 사용할 수 있는 operation들. 페이지 타입별로 다른 구현체
         struct anon_page anon;

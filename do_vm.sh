@@ -11,5 +11,7 @@ source ../../activate
 # pintos --gdb --fs-disk filesys.dsk -p tests/userprog/fork-once:fork-once -- -q  -f run fork-once 
 # pintos --fs-disk filesys.dsk -p tests/userprog/fork-once:fork-once -- -q  -f run fork-once 
 
-pintos -v -k -T 60 -m 20   --fs-disk=10 -p tests/userprog/args-none:args-multiple --swap-disk=4 -- -q   -f run 'args-multiple ab cd ef'
+# pintos -v -k -T 60 -m 20   --fs-disk=10 -p tests/userprog/args-none:args-multiple --swap-disk=4 -- -q   -f run 'args-multiple ab cd ef'
 # pintos -v -k -T 60 -m 20   --fs-disk=10 -p tests/userprog/args-none:args-none --swap-disk=4 -- -q   -f run args-none
+
+pintos -v -k -T 60 -m 20   --fs-disk=10 -p tests/userprog/fork-once:fork-once --swap-disk=4 -- -q   -f run args-none
