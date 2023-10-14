@@ -479,6 +479,7 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED, st
             // install_page에 writable을 넣어주어야 함
             // page 구조체에 쓰기여부 넣기?
             // pml4e_walk로 구할 수 있나?
+            // page 구조체 만들 때 넣어주기.
             install_page(new_page->va, new_frame->kva, new_page->writable);
             // // vm_do_claim_page(): page를 넣으면, frame을 만들고 연결시키고 lazy_loading까지 해주는 함수.
             // if (!vm_do_claim_page(new_page)) {
