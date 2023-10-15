@@ -15,7 +15,6 @@
 #include "userprog/gdt.h"
 #include "userprog/syscall.h" // fd_table_destroy를 위한 추가
 #include "userprog/tss.h"
-#include "vm/vm.h" // lazy_load_info를 위한 추가
 #include <debug.h>
 #include <hash.h> // SPT 해시테이블을 위해서 추가
 #include <inttypes.h>
@@ -180,6 +179,7 @@ static void __do_fork(void *aux) {
     process_activate(current);
 #ifdef VM
     supplemental_page_table_init(&current->spt);
+    current->running_file = file_duplicate(parent->running_file);
     if (!supplemental_page_table_copy(&current->spt, &parent->spt))
         goto error;
 #else
@@ -244,6 +244,7 @@ int process_exec(void *f_name) {
 
     /* 현재 프로세스의 User-side Virtual Memory pml4를 NULL로 처리한 뒤 페이지 테이블 전용 레지스터를 0으로 초기화 (사용 준비) */
     process_cleanup();
+    supplemental_page_table_init(&thread_current()->spt);
 
     /* 임시로 저장한 intr_frame을 활용해서 파일을 디스크에서 실제로 로딩, 실패시 -1 반환으로 방어.
        load() 함수에서 _if의 값들을 마저 채우고 현재 스레드로 적용함. */
@@ -331,6 +332,12 @@ void process_exit(void) {
     if (curr->parent_is) {
         sema_up(&curr->wait_sema);
         sema_down(&curr->free_sema);
+    }
+
+    /* 프로세스가 종료되면서, 만일 지금 Running_File이 있었다면 해당 파일 닫기 */
+    if (curr->running_file != NULL) {
+        file_close(curr->running_file);
+        curr->running_file = NULL;
     }
 
     /* 페이지 테이블 메모리 반환 및 pml4 리셋 */
@@ -488,12 +495,15 @@ static bool load(const char *file_name, struct intr_frame *if_) {
     /* 실제 Executable File을 로딩 */
 
     file = filesys_open(parsed_file_name);
+    t->running_file = file;
 
-    // printf("CUSTOM MESSAGE : file_name : %s\n", parsed_file_name);
     if (file == NULL) {
         printf("load: %s: open failed\n", parsed_file_name);
         goto done;
     }
+
+    /* Debug */
+    // printf("CUSTOM MESSAGE : file_name : %s\n", parsed_file_name);
 
     /* Executable File의 헤더를 읽고 검증 */
     if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr || memcmp(ehdr.e_ident, "\177ELF\2\1\1", 7) || ehdr.e_type != 2 || ehdr.e_machine != 0x3E // amd64
@@ -765,26 +775,31 @@ static bool install_page(void *upage, void *kpage, bool writable) {
 ////////////////////////////////////////////////////////////////////////////////
 
 static bool lazy_load_segment(struct page *page, void *aux) {
+
     struct lazy_load_aux *info = (struct lazy_load_aux *)aux;
 
     if (!info)
         return false;
 
     /* 주어진 데이터를 기반으로 파일을 찾기 (현재 핀토스는 FILESYS를 기본 모드로 사용 ; 따라서 디렉토리 하나라 간단함) */
-    file_seek(info->file, info->ofs);
+    file_seek(info->file, info->offset);
 
     /* 로딩 예정인 페이지의 프레임을 정의하고, */
-    uint8_t *frame = page->frame;
+    uint8_t *frame_addr = page->frame->kva;
+    if (frame_addr == NULL){
+        return false;
+    }
 
     /* 정의한 프레임에다 파일을 불러오면 됨 */
-    if (file_read(info->file, frame, info->read_bytes) != (int)info->read_bytes) {
+    if (file_read(info->file, frame_addr, info->read_bytes) != (int)info->read_bytes) {
         return false; // file_read는 읽어온 byte를 반환하기에, lazy_load_aux로 전달된 양과 비교
     }
 
     /* 불러온 영역을 제외한 나머지는 0으로 채워야 함 */
-    memset(frame + info->read_bytes, 0, info->zero_bytes);
+    memset(frame_addr + info->read_bytes, 0, info->zero_bytes);
 
     /* 성공 */
+    free(aux);
     return true;
 }
 
@@ -805,16 +820,17 @@ static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t 
         size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
         /* vm.h에 만든 lazy_load_info 구조를 사용해서 aux로 전달해야 함 ; 일단 메모리 공간 확보 */
-        struct lazy_load_aux *info = malloc(sizeof(struct lazy_load_aux));
+        struct lazy_load_aux *info = (struct lazy_load_aux*)calloc(1, sizeof(struct lazy_load_aux));
         if (!info) {
             return false;
         }
 
         /* malloc으로 공간을 확보했으니 load_segment()로 전달받은 데이터로 채우기 */
         info->file = file;
-        info->ofs = ofs;
+        info->offset = ofs;
         info->read_bytes = page_read_bytes;
         info->zero_bytes = page_zero_bytes;
+        info->writable = writable;
 
         /* 만들어둔 데이터 구조체를 사용해서 페이지 초기화 작업 수행 */
         void *aux = NULL;
@@ -823,10 +839,12 @@ static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t 
             return false;
         }
 
-        /* Advance (이건 아직 뭔가 싶음) */
+        /* 인자로 주어졌던 값들을 업데이트 */
+        ofs += page_read_bytes; // 이건 직접 추가, 나머지는 이미 있었음
         read_bytes -= page_read_bytes;
         zero_bytes -= page_zero_bytes;
         upage += PGSIZE;
+
     }
     return true;
 }
@@ -841,7 +859,7 @@ static bool setup_stack(struct intr_frame *if_) {
   
     /* 모든 페이지는 vm_alloc_page로 초기화하고 확보해야 한다고 했으니...
        (type, upage, writable) 세가지를 인자로 사용 */
-    if (vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, true)) {
+    if (vm_alloc_page(VM_ANON, stack_bottom, true)) {
         success = true;
         if_->rsp = USER_STACK;
     }

@@ -9,7 +9,7 @@
 #include "threads/interrupt.h"
 #include "threads/synch.h" // fd_lock을 스레드마다 구현하기 위함
 
-#define VM
+// #define VM
 
 #ifdef VM
 #include "vm/vm.h"
@@ -142,6 +142,9 @@ struct thread {
 
     /* Table for whole virtual memory owned by thread. */
     struct supplemental_page_table spt;
+
+    /* 현재 스레드가 실행중인 파일 */
+    struct file *running_file;
 
 #endif
 

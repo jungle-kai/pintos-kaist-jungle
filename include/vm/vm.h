@@ -51,6 +51,8 @@ struct page {
 
     /* 구현 영역 */
     struct hash_elem spt_hash_elem;
+    bool writable;
+    enum vm_type PAGE_TYPE;
 
     /* Per-type data are binded into the union.
      * Each function automatically detects the current union */
@@ -88,27 +90,28 @@ struct page_operations {
 // #1 : lazy_load를 위해 필요한 데이터를 저장
 struct lazy_load_aux {
     struct file *file;
-    off_t ofs;
+    off_t offset;
     uint32_t read_bytes;
     uint32_t zero_bytes;
+    bool writable;
 };
 
-// #2 : 물리 메모리 로딩된 내역을 확인하기 위해서 (TODO: THIS IS A TEMPORARY DRAFT)
-struct frame_table {
-    struct list *frame_table_list;
-    size_t size; // 시스템의 Frame 전체 숫자, 필요 없을수도 있음 (palloc 건드려서 넣기? spt / pt 넣는건?)
-};
+// // #2 : 물리 메모리 로딩된 내역을 확인하기 위해서 (TODO: THIS IS A TEMPORARY DRAFT)
+// struct frame_table {
+//     struct list *frame_table_list;
+//     size_t size; // 시스템의 Frame 전체 숫자, 필요 없을수도 있음 (palloc 건드려서 넣기? spt / pt 넣는건?)
+// };
 
-// #3 : frame_table_list에 들어가는 구조체
-struct frame_table_entry {
-    struct frame *frame;  // 각각의 프레임을 향하는 포인터
-    struct thread *owner; // 보유한 스레드를 향하는 포인터
-    bool in_use;          // 현재 사용중인지 기록
-    struct list_elem frame_table_list_elem;
-};
+// // #3 : frame_table_list에 들어가는 구조체
+// struct frame_table_entry {
+//     struct frame *frame;  // 각각의 프레임을 향하는 포인터
+//     struct thread *owner; // 보유한 스레드를 향하는 포인터
+//     bool in_use;          // 현재 사용중인지 기록
+//     struct list_elem frame_table_list_elem;
+// };
 
-// #4 : 글로벌 선언
-struct frame_table frame_table;
+// // #4 : 글로벌 선언
+// struct frame_table frame_table;
 
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////////////// 직접 추가한 데이터 구조체 끝 /////////////////////////////

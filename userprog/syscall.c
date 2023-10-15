@@ -168,8 +168,8 @@ bool pointer_validity_check(void *addr) {
         return false;
 
     /* 제공된 주소가 Unmapped일 경우 */
-    if (pml4_get_page(thread_current()->pml4, addr) == NULL)
-        return false; // pml4만 확인하는 함수 (나머지 레벨의 page table 들도 검사해야하는데, 우선 이렇게)
+    // if (pml4_get_page(thread_current()->pml4, addr) == NULL)
+    //     return false; // pml4만 확인하는 함수 (나머지 레벨의 page table 들도 검사해야하는데, 우선 이렇게)
 
     /* 다 통과했으니 */
     return true;
@@ -260,6 +260,13 @@ int exec(const char *cmd_line) {
         exit(-1);
     }
     strlcpy(cmd_line_copy, cmd_line, PGSIZE);
+
+    /* 기존에 Running 중이던 파일이 있었다면 파일 닫기 */
+    struct file *curr_file = thread_current()->running_file;
+    if (curr_file != NULL) {
+        file_close(curr_file);
+        thread_current()->running_file = NULL;
+    }
 
     /* Process Exec을 불러서 실패시 에러 반환 */
     if (process_exec(cmd_line_copy) == -1) {

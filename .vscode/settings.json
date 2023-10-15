@@ -63,6 +63,8 @@
         "flags.h": "c",
         "init.h": "c",
         "random.h": "c",
-        "debug.h": "c"
+        "debug.h": "c",
+        "stdio.h": "c",
+        "intr-stubs.h": "c"
     }
 }

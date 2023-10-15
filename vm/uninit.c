@@ -12,6 +12,7 @@
 #include "vm/vm.h"
 #include "vm/uninit.h"
 #include <hash.h> // SPT 해시테이블을 위해서 추가
+#include <stdlib.h> // free()를 위해서 추가
 
 // #define VM
 // clang-format on
@@ -36,8 +37,12 @@ void uninit_new(struct page *page, void *va, vm_initializer *init, enum vm_type 
     ASSERT(page != NULL);
 
     *page = (struct page){.operations = &uninit_ops,
-                          .va = va,
-                          .frame = NULL, /* no frame for now */
+                          .va = va,      // 가상페이지의 시작 주소
+                          .frame = NULL, // 페이지 최초 생성 시점에는 연결된 프레임이 없음
+
+                          /* Struct Page의 Union 부분을 차지하게 됨.
+                             Struct (구조체)는 멤버들이 각각 메모리를 차지하고 하나의 역할이 있다면,
+                             Union (공용체)는 모든 멤버들이 하나의 메모리 공간을 공유 ; 자주 쓰이진 않지만 모드 전환 등에 사용됨. */
                           .uninit = (struct uninit_page){
                               .init = init,
                               .type = type,
@@ -56,12 +61,14 @@ static bool uninit_initialize(struct page *page, void *kva) {
     struct uninit_page *uninit = &page->uninit;
 
     /* Fetch first, page_initialize may overwrite the values */
+    /* uninit_new()로 페이지를 생성할 때 넣엏던 vm_initializer를 받아와서 저장 */
     vm_initializer *init = uninit->init;
     void *aux = uninit->aux;
 
-    /* @@@@@@@@@@ TODO: You may need to fix this function. @@@@@@@@@@ */
+    /* 페이지 타입에 따른 page_initalizer 함수들을 적용하고, lazy_load_aux에 해당하는 init() 함수 호출 */
+    bool result = uninit->page_initializer(page, uninit->type, kva) && (init ? init(page, aux) : true);
 
-    return uninit->page_initializer(page, uninit->type, kva) && (init ? init(page, aux) : true);
+    return result;
 }
 
 /* Free the resources hold by uninit_page. Although most of pages are transmuted
@@ -76,4 +83,7 @@ static void uninit_destroy(struct page *page) {
     struct uninit_page *uninit UNUSED = &page->uninit;
 
     /* @@@@@@@@@@ TODO: Fill this function. If you don't have anything to do, just return. @@@@@@@@@@ */
+
+    /* Uninit 상태의 페이지의  */
+    free(page->uninit.aux);
 }

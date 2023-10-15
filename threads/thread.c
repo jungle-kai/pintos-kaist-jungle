@@ -8,6 +8,7 @@
 #include "threads/palloc.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "vm/vm.h"
 #include <debug.h>
 #include <hash.h> // SPT 해시테이블을 위해서 추가
 #include <random.h>
