@@ -10,4 +10,7 @@ int process_wait(tid_t);
 void process_exit(void);
 void process_activate(struct thread *next);
 
+/* 스택 성장을 위한 범위 정의 */
+#define STACK_RESERVED_SIZE (1 * 1024 * 1024) // 1MB
+
 #endif /* userprog/process.h */

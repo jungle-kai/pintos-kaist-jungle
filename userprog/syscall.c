@@ -144,6 +144,12 @@ void syscall_handler(struct intr_frame *f) {
         close(f->R.rdi);
         break;
 
+    case SYS_MMAP:
+        break;
+
+    case SYS_MUNMAP:
+        break;
+
     default:
         printf("Unknown system call: %d\n", syscall_num); // deprecated by placeholder, but kept in place
         thread_exit();

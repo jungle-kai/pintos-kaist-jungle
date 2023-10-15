@@ -867,4 +867,33 @@ static bool setup_stack(struct intr_frame *if_) {
     return success;
 }
 
+/* 처음부터 1MB 어치의 스택을 SPT에 만들어두는 전략은 pt_grow_bad 테스트에서 실패 -> 추후 해봐도 재밌을 작업이라 코드만 남겨둠 */
+// static bool setup_stack(struct intr_frame *if_) {
+//     /* USER_STACK은 스레드별 스택의 시작점, 아래로 커지는 구조.
+//        이 함수는 스택을 최초 생성하는 함수니까, 시작점이자 rsp의 위치에서부터 페이지 크기만큼 내려가서 페이지를 할당. */
+//     void *stack_bottom = (void *)(((uint8_t *)USER_STACK) - PGSIZE);
+//     /* 과제에 의하면 스택은 1MB를 차지해야 함 ; 따라서 미리 1MB까지 공간을 매핑해서 페이지테이블에 저장해두면 별도 로직이 필요 없음 */
+//     void *reserved_bottom = (void *)(((uint8_t *)USER_STACK) - STACK_RESERVED_SIZE);
+//     /* stack_bottom (첫페이지)를 포함해서 1MB까지 페이지 전부 순회해서 반복 */
+//     for (void* addr = stack_bottom; addr >= reserved_bottom; addr -= PGSIZE) {
+//         /* 매번 alloc을 하되, 실패할 경우 */
+//         if (!vm_alloc_page(VM_ANON, addr, true)){
+//             /* 지금까지 alloc 한것들을 정리해줘야 함 */
+//             for (void* cleanup_addr = addr + PGSIZE; cleanup_addr <= stack_bottom; cleanup_addr += PGSIZE) {
+//                 struct page* cleanup_page = spt_find_page(&thread_current()->spt, cleanup_addr);
+//                 if (cleanup_page) {
+//                     spt_remove_page(&thread_current()->spt, cleanup_page);
+//                     free(cleanup_page);
+//                 }
+//             }
+//             /* 한번이라도 실패하면 load()에 실패했다고 회신 */
+//             return false;
+//         }
+//     }
+//     /* 성공했다면 RSP 업데이트하고 성공했다고 회신 */
+//     if_->rsp = USER_STACK;
+//     return true;
+// }
+
 #endif /* VM */
+

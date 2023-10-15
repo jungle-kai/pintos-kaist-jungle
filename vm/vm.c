@@ -85,9 +85,6 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
     /* 현재 스레드의 SPT를 정의 (접근) */
     struct supplemental_page_table *spt = &thread_current()->spt;
 
-    /* Upage 가상주소가 이미 해당 스레드에서 페이지로 사용중일 때에만 True 반환 */
-    bool result = false;
-
     /* 해시는 페이지의 시작주소를 기준으로 하기 때문에 Round_down을 해서 접근해야 함 */
     upage = pg_round_down(upage);
 
@@ -118,7 +115,7 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
             // ASSERT(false); // 뭔가 잘못되었으니 테스트 종료
         }
 
-        /* 초기화하는 페이지에 Wrieable 및 Page Type 저장 (위 함수들에서 해주지 않음) */
+        /* 초기화하는 페이지에 Writable 및 Page Type 저장 (이전의 함수들에서 해주지 않음) */
         new_page->writable = writable;
         new_page->PAGE_TYPE = type;
 
@@ -273,49 +270,57 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
 
     struct supplemental_page_table *spt = &thread_current()->spt;
     struct page *page = NULL;
+
+    /* (1) Validate The Fault ; 접근하면 안되는 영역인지 확인 */
+    if (addr == NULL || is_kernel_vaddr(addr)) {
+        return false;
+    }
+
+    /* (2) Stack 관련이면 여기서 미리 처리 */
+    if (addr <= f->rsp && addr >= f->rsp - (PGSIZE / 4)) {        // Fault 주소가 스택 페이지 바로 다음 페이지 범위 안에 있으면
+        if (USER_STACK - (uintptr_t)addr > STACK_RESERVED_SIZE) { // 만일 1MB를 넘어가면 중지
+            return false;
+        }
+        return vm_claim_page(addr); // 1MB를 넘지 않는다면 스택 연장
+    }
+    // if (addr == (void *)f->rsp) {
+    //     return vm_claim_page(addr);
+    // }
+
+    /* (3) Locate page in thread's SPT ; 스레드가 보유한게 맞는지 확인 */
     addr = pg_round_down(addr);
     page = spt_find_page(spt, addr);
     if (!page) {
         return false;
     }
-    return vm_do_claim_page(page);
 
-    // struct supplemental_page_table *spt = &thread_current()->spt;
-    // struct page *page = NULL;
+    /* (3) 만일 write operation인데 page write 권한이 없다면 */
+    if (write && !page->writable) {
+        return false;
+    }
 
-    // /* (1) Validate The Fault ; 접근하면 안되는 영역인지 확인 */
-    // if (addr == NULL || is_kernel_vaddr(addr)) {
-    //     return false;
-    // }
-
-    // /* (2) Locate the faulting Page ; 주소를 기반으로 페이지 확인 */
-    // page = spt_find_page(spt, addr);
-    // if (page == NULL) {
-    //     return false; // SPT에 없음
-    // }
-
-    // /* (3) Write 가능 여부에 따라 엣지케이스 처리 ; PTE에서 확인해야 함 */
+    // /* 이건 왜 안될까 */
     // uint64_t *pte = pml4e_walk(thread_current()->pml4, (uint64_t)page->va, false);
     // if (!pte) {
     //     return false; // Page Table 탐색 실패
     // }
-
     // if (write && !is_writable(pte)) {
     //     // vm_handle_wp -> 나중에 write protect 페이지에 발생하는 엣지케이스 대응해야 함 (바로 위에 다른 함수)
     //     return false; // Write Operation인데 해당 페이지는 Write 불가
     // }
 
-    // /* (4) Obtain a Frame ; 현재 페이지에 frame 기록이 없다면 */
-    // if (page->frame == NULL) {
+    /* (4) 페이지 프레임 확보 */
+    if (page->frame == NULL) {
 
-    //     /* Frame의 확보, 페이지와 연결, PTE 생성/삽입, 물리 메모리에 넣는 것까지 전부 vm_do_claim_page 에서 수행 */
-    //     return vm_do_claim_page(page);
+        /* Frame의 확보, 페이지와 연결, PTE 생성/삽입, 물리 메모리에 넣는 것까지 전부 vm_do_claim_page 에서 수행 */
+        return vm_do_claim_page(page);
 
-    // } else {
+    } else {
 
-    //     /* 임시조치 ; Page->Frame이 있다면 Page Fault가 발생하지 말았어야 하지 않을까? */
-    //     PANIC("Already in the Frame");
-    // }
+        /* 임시조치 ; Page->Frame이 있다면 Page Fault가 발생하지 말았어야 하지 않을까? */
+        PANIC("Already in the Frame");
+        // FREE ALL RESOURCES (PROCESS EXIT)
+    }
 
     /* Locate the page that faulted in the supplemental page table.
        If the memory reference is valid, use the supplemental page table entry to locate the data that goes in the page,
@@ -335,19 +340,16 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
        Point the page table entry for the faulting virtual address to the physical page. You can use the functions in threads/mmu.c. */
 }
 
-/* Free the page.
-   DO NOT MODIFY THIS FUNCTION. */
+/* Free the page. DO NOT MODIFY THIS FUNCTION. */
+/* 페이지를 Free 해주는 함수로, 건드리지 말 것. */
 void vm_dealloc_page(struct page *page) {
-
-    /* 페이지를 Free 해주는 함수로, 건드리지 말 것. */
 
     destroy(page);
     free(page);
 }
 
 /* Claim the page that allocate on VA. */
-/* 가상 주소를 기반으로 소속 페이지를 찾고, DRAM의 Frame과 연결하여 사실상 메모리에 넣는 함수.
-   이 함수가 항상 먼저 불릴 것 같고, 여기서 페이지를 찾은 뒤 do_claim_page()로 넘어감. */
+/* 가상 주소를 기반으로 소속 페이지를 검색해보고, 없다면 페이지를 생성해서 DRAM의 Frame에 삽입하는 함수 (VM_ANON ; 스택용). */
 bool vm_claim_page(void *va) {
 
     /* 가상주소를 기반으로 SPT에서 페이지를 찾고, 이미 있으면 False 리턴 */
@@ -357,19 +359,13 @@ bool vm_claim_page(void *va) {
         return false;
     }
 
-    /* 새로운 페이지에 메모리를 할당하고, 생성 실패시 False 리턴 */
-    struct page *page = NULL;
-    page = (struct page *)calloc(1, sizeof(struct page));
-    if (page == NULL) {
+    /* 페이지 생성 및 SPT 삽입 */
+    if (!vm_alloc_page(VM_ANON, va, true)) {
         return false;
     }
 
-    /* 새로운 페이지를 초기화 (ANON) */
-    uninit_new(page, va, NULL, VM_ANON, NULL, anon_initializer);
-    // TODO (Unsure)
-
-    /* SPT에 넣기 */
-    if (!spt_insert_page(&spt, page)) {
+    struct page *page = spt_find_page(spt, va);
+    if (page == NULL) {
         return false;
     }
 
@@ -378,7 +374,7 @@ bool vm_claim_page(void *va) {
 }
 
 /* Claim the PAGE and set up the mmu. */
-/* vm_claim_page()에서 찾은 페이지를 실제 vm_get_frame()으로 확보한 Frame과 연결하는 함수. */
+/* 페이지를 vm_get_frame()으로 확보한 Frame과 연결하는 함수. */
 static bool vm_do_claim_page(struct page *page) {
 
     /* Frame을 확보 */
@@ -391,7 +387,7 @@ static bool vm_do_claim_page(struct page *page) {
     frame->page = page;
     page->frame = frame; // frame의 kva는 frame table에서 관리해야 할 것 같음
 
-    /* PTE를 생성/삽입해서 연결 */
+    /* SPT가 아닌 실제 PT에 PTE를 생성/삽입해서 연결 */
     if (!install_page(page->va, frame->kva, page->writable)) {
         palloc_free_page(frame->kva);
         return false;
@@ -483,7 +479,9 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst, struct su
 
             /* 부모의 구조체를 확보해서 값을 복제 */
             struct lazy_load_aux *parent_info = (struct lazy_load_aux *)parent_page->uninit.aux;
-            memcpy(info, parent_info, sizeof(struct lazy_load_aux));
+            if (parent_info != NULL) {
+                memcpy(info, parent_info, sizeof(struct lazy_load_aux));
+            }
 
             /* 확보한 구조체를 기반으로 페이지 초기화 작업 수행 (당연한 말이지만 Frame에는 넣을 필요 없음) */
             uninit_new(new_page, parent_page->va, parent_page->uninit.init, parent_page->uninit.type, info, parent_page->uninit.page_initializer);
