@@ -87,4 +87,7 @@ static void uninit_destroy(struct page *page) {
     struct uninit_page *uninit UNUSED = &page->uninit;
 
     /* @@@@@@@@@@ TODO: Fill this function. If you don't have anything to do, just return. @@@@@@@@@@ */
+    
+    // aux값 프리
+    free(page->uninit.aux);
 }

@@ -142,6 +142,7 @@ struct thread {
 
     /* Table for whole virtual memory owned by thread. */
     struct supplemental_page_table spt;
+    struct file* running_file;
 
 #endif
 

@@ -167,9 +167,10 @@ bool pointer_validity_check(void *addr) {
     if (is_kernel_vaddr(addr))
         return false;
 
-    /* 제공된 주소가 Unmapped일 경우 */
-    if (pml4_get_page(thread_current()->pml4, addr) == NULL)
-        return false; // pml4만 확인하는 함수 (나머지 레벨의 page table 들도 검사해야하는데, 우선 이렇게)
+
+    // /* 제공된 주소가 Unmapped일 경우 */
+    // if (pml4_get_page(thread_current()->pml4, addr) == NULL)
+    //     return false; // pml4만 확인하는 함수 (나머지 레벨의 page table 들도 검사해야하는데, 우선 이렇게)
 
     /* 다 통과했으니 */
     return true;
@@ -262,7 +263,14 @@ int exec(const char *cmd_line) {
     strlcpy(cmd_line_copy, cmd_line, PGSIZE);
 
     /* Process Exec을 불러서 실패시 에러 반환 */
+    struct file* curr_file = thread_current()->running_file;
+    if (curr_file != NULL) {
+        file_close(curr_file);
+        thread_current()->running_file = NULL;
+    }
+
     if (process_exec(cmd_line_copy) == -1) {
+        // printf("exec 실패??\n");
         exit(-1);
     }
 

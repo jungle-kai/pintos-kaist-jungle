@@ -2,7 +2,6 @@
 #ifndef VM_VM_H
 #define VM_VM_H
 #include <stdbool.h>
-#include <hash.h> // SPT 해시테이블을 위해서 추가
 #include "threads/palloc.h"
 // clang-format on
 
@@ -58,9 +57,6 @@ struct page {
     void *va;            /* Address in terms of user space */ /* 유저 공간의 가상페이지 시작주소*/
     struct frame *frame; /* Back reference for frame */ /* 페이지와 연결된 프레임 */
 
-    /* 구현 영역 */
-    struct hash_elem spt_hash_elem;
-
     /* Per-type data are binded into the union.
      * Each function automatically detects the current union */
     /* 유니온 영역은 4개 페이지 구조체 중 하나가 된다 */
@@ -68,6 +64,7 @@ struct page {
     /***** 추가한 필드 *****/
     struct hash_elem spt_hash_elem;
     bool writable;
+    enum vm_type PAGE_TYPE;
     /***** 추가한 필드 *****/
     
     union {
@@ -127,6 +124,7 @@ struct supplemental_page_table {
 };
 
 #include "threads/thread.h"
+void destory_page (struct hash_elem *e, void *aux);
 void supplemental_page_table_init(struct supplemental_page_table *spt);
 bool supplemental_page_table_copy(struct supplemental_page_table *dst, struct supplemental_page_table *src);
 void supplemental_page_table_kill(struct supplemental_page_table *spt);

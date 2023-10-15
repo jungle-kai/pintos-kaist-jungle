@@ -47,4 +47,7 @@ static bool anon_swap_in(struct page *page, void *kva) { struct anon_page *anon_
 static bool anon_swap_out(struct page *page) { struct anon_page *anon_page = &page->anon; }
 
 /* Destroy the anonymous page. PAGE will be freed by the caller. */
-static void anon_destroy(struct page *page) { struct anon_page *anon_page = &page->anon; }
+static void anon_destroy(struct page *page) {
+    struct anon_page *anon_page = &page->anon;
+    free(page->frame);
+}

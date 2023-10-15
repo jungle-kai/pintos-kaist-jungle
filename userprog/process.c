@@ -179,6 +179,7 @@ static void __do_fork(void *aux) {
     process_activate(current);
 #ifdef VM
     supplemental_page_table_init(&current->spt);
+    current->running_file = file_duplicate(parent->running_file);
     if (!supplemental_page_table_copy(&current->spt, &parent->spt))
         goto error;
 #else
@@ -243,12 +244,13 @@ int process_exec(void *f_name) {
 
     /* 현재 프로세스의 User-side Virtual Memory pml4를 NULL로 처리한 뒤 페이지 테이블 전용 레지스터를 0으로 초기화 (사용 준비) */
     process_cleanup();
+    supplemental_page_table_init(&thread_current()->spt);
 
     /* 임시로 저장한 intr_frame을 활용해서 파일을 디스크에서 실제로 로딩, 실패시 -1 반환으로 방어.
        load() 함수에서 _if의 값들을 마저 채우고 현재 스레드로 적용함. */
 
     success = load(file_name, &_if);
-
+    
     palloc_free_page(file_name);
     if (!success)
         return -1;
@@ -330,7 +332,22 @@ void process_exit(void) {
     if (curr->parent_is) {
         sema_up(&curr->wait_sema);
         sema_down(&curr->free_sema);
+
+        // // 프로그램의 시작지점 프로세스면 파일 종료
+        // if (!strcmp(curr->parent_is->name, "main")) {
+        //     file_close(curr->running_file);
+        // }
     }
+    
+    if (curr->running_file != NULL) {
+        file_close(curr->running_file);
+        curr->running_file = NULL;
+    }
+
+    // // 부모가 종료될 때 file 종료
+    // else {
+    //     file_close(curr->running_file);
+    // }
 
     /* 페이지 테이블 메모리 반환 및 pml4 리셋 */
     palloc_free_page(table);
@@ -481,12 +498,15 @@ static bool load(const char *file_name, struct intr_frame *if_) {
             break;
         }
     }
-
     char *parsed_file_name = argv[0];
 
     /* 실제 Executable File을 로딩 */
 
+    // file_close(file);
     file = filesys_open(parsed_file_name);
+    t->running_file = file;
+
+    // printf("프로세스 이름: %s, 여기니?\n", t->name);
 
     // printf("CUSTOM MESSAGE : file_name : %s\n", parsed_file_name);
     if (file == NULL) {
@@ -807,12 +827,15 @@ static bool lazy_load_segment(struct page *page, void *aux) {
             memset(kpage + f_info->page_read_bytes, 0, f_info->page_zero_bytes);
         }
 
-        /* 페이지를 프로세스 주소공간에 추가함*/
-        if (!install_page(page->va, kpage, writable)) {
-            printf("fail\n");
-            palloc_free_page(kpage);
-            return false;
-        }
+        // /* 페이지를 프로세스 주소공간에 추가함*/
+        // if (!install_page(page->va, kpage, writable)) {
+        //     printf("fail\n");
+        //     palloc_free_page(kpage);
+        //     return false;
+        // }
+        
+        // file_info 다 썼으면 해제해도 됨
+        free(aux);
         return true;
 }
 
@@ -834,7 +857,7 @@ static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t 
     ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
     ASSERT(pg_ofs(upage) == 0);
     ASSERT(ofs % PGSIZE == 0);
-    
+    // printf("upage: %p\n", upage);
     while (read_bytes > 0 || zero_bytes > 0) {
         struct file_info* f_info = (struct file_info*)calloc(1, sizeof(struct file_info));
         
@@ -882,6 +905,11 @@ static bool setup_stack(struct intr_frame *if_) {
         return true;
     }
     return false;
+    
+    // if (vm_alloc_page_with_initializer(VM_ANON, stack_bottom, 1, lazy_load_segment, NULL)) {
+    //     if_->rsp = USER_STACK; // stack_bottom은 스택을 확장시켜준 것 뿐이고, 아직 rsp는 USER_STACK이다.
+    //     return true;
+    // }
 
  
 

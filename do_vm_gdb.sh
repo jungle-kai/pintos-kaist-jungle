@@ -9,6 +9,7 @@ source ../../activate
 # pintos --fs-disk filesys.dsk -p tests/userprog/close-normal:close-normal -p ../../tests/userprog/sample.txt:sample.txt -- -q -f run close-normal
 # pintos --fs-disk filesys.dsk -p tests/userprog/read-normal:read-normal -p ../../tests/userprog/sample.txt:sample.txt -- -f run read-normal
 # pintos --gdb --fs-disk filesys.dsk -p tests/userprog/fork-once:fork-once -- -q  -f run fork-once 
-# pintos --fs-disk filesys.dsk -p tests/userprog/fork-once:fork-once -- -q  -f run fork-once 
+# pintos --gdb --fs-disk filesys.dsk -p tests/userprog/fork-once:fork-once -- -q  -f run fork-once 
 
-pintos -v -k -m 20  --gdb --fs-disk=10 -p tests/userprog/args-none:args-none --swap-disk=4 -- -q   -f run args-none
+# pintos -v -k -m 20  --gdb --fs-disk=10 -p tests/userprog/args-none:args-none --swap-disk=4 -- -q   -f run args-none
+pintos -v -k -m 20  --gdb --fs-disk=10 -p tests/userprog/fork-once:fork-once --swap-disk=4 -- -q   -f run fork-once

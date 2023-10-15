@@ -3,6 +3,7 @@
 // clang-format off
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
+#include "userprog/process.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
 #include <hash.h> // SPT 해시테이블을 위해서 추가
@@ -103,7 +104,6 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
         }
 		// 타입별로 초기화 함수 호출해서 page 초기화
 
-
         switch (type) {
             case VM_ANON:
         		uninit_new(page, upage, init, type, aux, anon_initializer);
@@ -118,9 +118,10 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
 
         // writable 추가
         page->writable = writable;
-
+        page->PAGE_TYPE = type;
 		// spt에 있는 해시에 page 추가
         result = spt_insert_page(spt, page);
+        // printf("upage: %p, result: %d\n", upage, result);
         return result;
     }
 err:
@@ -279,7 +280,7 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
     /* 2. 유효하다면, fault발생된 addr 가상 주소를 가지고 spt에 접근해서 page 구조체를 구한다. */
     // printf("페이지폴트 주소!!: %p\n", addr); 
     addr = pg_round_down(addr);
-    // printf("ROUNDED 페이지폴트 주소!!: %p\n", addr); 
+    // printf("ROUNDED 페이지폴트 주소!!: %p\n\n", addr); 
     
     page = spt_find_page(spt, addr);
 
@@ -367,22 +368,30 @@ bool vm_claim_page(void *va UNUSED) {
 
     // spt에 들어가 있지 않았던 것일 때,
     va = pg_round_down(va);
-    if (spt_find_page(&spt, va) == NULL) {
-        // 페이지 구조체 만들고,
-        page = (struct page*)calloc(1, sizeof(struct page));
-        if (page == NULL) {
-            return 0;
-        }
-        // 페이지가 위치한 va 연결시키고,
-        page->va = va;
-        // spt에 넣고,
-        spt_insert_page(&spt, page);
 
-        // 해당 페이지 구조체와 frame을 연결시킴
-        return vm_do_claim_page(page);
+    if (spt_find_page(&spt, va) != NULL) {
+        // 들어가 있던거면 오류, false 리턴
+        return false;
     }
-    // 들어가 있던거면 오류, 0 리턴
-    return 0;
+
+    // 페이지 구조체 만들고,
+    page = (struct page*)calloc(1, sizeof(struct page));
+
+    // 생성 못했으면 false 리턴
+    if (page == NULL) {
+        return false;
+    }
+
+    // 페이지 초기화(ANON 타입)
+    uninit_new(page, va, NULL, VM_ANON, NULL, anon_initializer);
+
+    // spt에 넣고,
+    if (!spt_insert_page(&spt, page)) {
+        return false;
+    }
+
+    // 해당 페이지 구조체와 frame을 연결시킴
+    return vm_do_claim_page(page);
 }
 
 static bool install_page(void *upage, void *kpage, bool writable) {
@@ -409,11 +418,11 @@ static bool vm_do_claim_page(struct page *page) {
 
     /* @@@@@@@@@@ TODO: Insert page table entry to map page's VA to frame's PA. @@@@@@@@@@ */
     // pml4_set_page(thread_current()->pml4, page->va, frame->kva, 1);
-    // if (!install_page(page->va, frame->kva, 1)) {
-    //     printf("fail\n");
-    //     palloc_free_page(frame->kva);
-    //     return false;
-    // }
+    if (!install_page(page->va, frame->kva, page->writable)) {
+        printf("fail\n");
+        palloc_free_page(frame->kva);
+        return false;
+    }
     
     bool res = swap_in(page, frame->kva);
     return res;
@@ -455,13 +464,12 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED, st
         // 새 page 만듬
         struct page* new_page = (struct page*)calloc(1, sizeof(struct page));
 
-        // 새 page 초기화
-        uninit_new(new_page, parent_page->va, parent_page->uninit.init, parent_page->uninit.type, parent_page->uninit.aux, parent_page->uninit.page_initializer);
-
-        new_page->writable = parent_page->writable;
-    
         // frame이 NULL이 아닐 때, 부모쪽 프레임과 연결된 물리메모리 데이터를 자식에도 할당해서 복사해줌
         if (parent_page->frame != NULL) {
+            // 새 page 초기화
+            uninit_new(new_page, parent_page->va, parent_page->uninit.init, parent_page->uninit.type, NULL, parent_page->uninit.page_initializer);
+            new_page->writable = parent_page->writable;
+
             // 일단 frame 얻기
             struct frame* new_frame = vm_get_frame();
 
@@ -494,6 +502,26 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED, st
             // vm_do_claim_page()가 성공했으면 이후에 해줄거 없음.
         }
 
+        // 아직 부모가 lazy_load_segment()를 호출하기 전일 때,
+        // 부모가 가지고 있는 aux를 다 복사해서 자식에게 넘겨줘야 함.
+        //  -> 부모, 자식 중 어느게 먼저 해당 페이지에 대해 lazy_load_segment()를 호출할 지 모르고, 페이지 로딩이 끝나면 free(file_info)해주기 때문에 서로 다른 malloc이어야 함. 
+        else {
+            // file 오픈
+            // char* file_name = thread_current()->parent_is->name;
+            // struct file* new_file = filesys_open(file_name);
+            // 부모의 aux를 복제
+            struct file_info* f_info = (struct file_info*)malloc(sizeof(struct file_info));
+            struct file_info* parent_file_info = (struct file_info*)parent_page->uninit.aux;
+            memcpy(f_info, parent_file_info, sizeof(struct file_info));
+
+            // 새 page 초기화
+            uninit_new(new_page, parent_page->va, parent_page->uninit.init, parent_page->uninit.type, f_info, parent_page->uninit.page_initializer);
+
+            new_page->writable = parent_page->writable;
+
+            // lazy_load_segment() 호출 전이라 install_page() 해주면 안됨.
+        }
+
         // 다 했으면 이제 dst에 새 page넣기
         if (!spt_insert_page(dst, new_page)) {
             printf("spt cpy: spt 새페이지 insert 실패!\n");
@@ -506,13 +534,20 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED, st
 
 }
 
+void destory_page (struct hash_elem *e, void *aux) {
+    struct page* page = hash_entry(e, struct page, spt_hash_elem);
+    vm_dealloc_page(page);
+}
+
 /* Free the resource hold by the supplemental page table */
 void supplemental_page_table_kill(struct supplemental_page_table *spt UNUSED) {
 
     /* SPT에 속한 페이지를 전부 삭제하고, 수정된 컨텐츠들을 디스크에 다시 저장하는 함수. */
-
     /* @@@@@@@@@@ TODO: Destroy all the SPT held by the current thread and writeback all the modified contents to the storage @@@@@@@@@@ */
+    hash_destroy(&spt->hash, destory_page);
 }
+
+
 
 /* Returns true if page a precedes page b. */
 bool
