@@ -290,5 +290,5 @@ make clean
 make
 cd build
 source ../../activate
-$PAGE_MERGE_MM
+$ARGS_NONE_GDB
 # $PAGE_SHUFFLE

@@ -13,4 +13,7 @@ void process_activate(struct thread *next);
 /* 스택 성장을 위한 범위 정의 */
 #define STACK_RESERVED_SIZE (1 * 1024 * 1024) // 1MB
 
+/* Static 떼고 여기 선언 */
+bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable);
+
 #endif /* userprog/process.h */

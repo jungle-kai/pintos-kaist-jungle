@@ -455,7 +455,7 @@ struct ELF64_PHDR {
 void parse_argv_to_stack(char **argv, struct intr_frame *if_);
 static bool setup_stack(struct intr_frame *if_);
 static bool validate_segment(const struct Phdr *, struct file *);
-static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable);
+// static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable);
 
 /* FILE_NAME에서 ELF Executable을 추출, 현재 스레드에 로딩하는 함수.
    %rip 레지스터에 entry point를 저장하고, %rsp에 스택 포인터도 초기화.
@@ -808,7 +808,8 @@ static bool lazy_load_segment(struct page *page, void *aux) {
    READ_BYTES는 FILE에서 OFS에서부터 발생하며, ZERO_BYTES는 READ_BYTES 이후의 나머지 바이트들.
    여기서 초기화 되는 페이지는 유저 프로세스에 의해서 WRITEABLE 해야 하며, 아니라면 READ_ONLY가 되어야 함.
    로딩 성공시 TRUE, 실패시 FALSE를 반환해야 함. */
-static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable) {
+// static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable) {
+bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable) {
     ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
     ASSERT(pg_ofs(upage) == 0);
     ASSERT(ofs % PGSIZE == 0);

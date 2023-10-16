@@ -53,15 +53,15 @@ void vm_init(void) {
     /* DO NOT MODIFY UPPER LINES ; 수정은 이 아래로부터만 진행 */
 
     /* Page-table Related */
-    lock_init(&page_table_lock); // 5개 모두 Global Variable로 선언되어 Data/BSS에 속함 (Palloc/Malloc/Calloc 불필요)
+    // lock_init(&page_table_lock); // 5개 모두 Global Variable로 선언되어 Data/BSS에 속함 (Palloc/Malloc/Calloc 불필요)
 
     /* Frame-table Related */
-    lock_init(&frame_table_lock);
-    list_init(&frame_table.frame_table_list);
+    // lock_init(&frame_table_lock);
+    // list_init(&frame_table.frame_table_list);
 
     /* Swap-table Related */
-    lock_init(&swap_table_lock);
-    list_init(&swap_table.swap_table_list);
+    // lock_init(&swap_table_lock);
+    // list_init(&swap_table.swap_table_list);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -135,6 +135,14 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
         /* 초기화하는 페이지에 Writable 및 Page Type 저장 (이전의 함수들에서 해주지 않음) */
         new_page->writable = writable;
         new_page->PAGE_TYPE = type;
+
+        /* 만일 파일타입을 Alloc하려는게 목적이라면 페이지의 file 포인터를 업데이트 */
+        if (type == VM_FILE) {
+            struct lazy_load_aux *aux_ptr = (struct lazy_load_aux *)aux;
+            new_page->file.origin_file = aux_ptr->file;
+            new_page->file.offset = aux_ptr->offset;
+            new_page->file.read_bytes = aux_ptr->read_bytes;
+        }
 
         /* 초기화된 페이지를 스레드의 SPT에 삽입 */
         if (!spt_insert_page(spt, new_page)) {
@@ -285,7 +293,9 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
     /* Page Fault에서는 다음과 같이 이 함수를 부름:
        vm_try_handle_fault(f, fault_addr, user, write, not_present) */
 
-    struct supplemental_page_table *spt = &thread_current()->spt;
+    struct thread *curr = thread_current();
+    struct supplemental_page_table *spt = &curr->spt;
+    uint64_t *pml4 = curr->pml4;
     struct page *page = NULL;
 
     /* (1) Validate The Fault ; 접근하면 안되는 영역인지 확인 */
@@ -329,6 +339,11 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
 
     /* (4) 페이지 프레임 확보 */
     if (page->frame == NULL) {
+
+        /* Write 때문에 Fault가 생겼다면, 성공 표기 하기 전에 dirty로 표시 */
+        if (write) {
+            pml4_set_dirty(pml4, page->va, true);
+        }
 
         /* Frame의 확보, 페이지와 연결, PTE 생성/삽입, 물리 메모리에 넣는 것까지 전부 vm_do_claim_page 에서 수행 */
         return vm_do_claim_page(page);
@@ -564,9 +579,9 @@ bool page_less_func(const struct hash_elem *a, const struct hash_elem *b, void *
 static bool install_page(void *upage, void *kpage, bool writable) {
 
     struct thread *t = thread_current();
-    lock_acquire(&page_table_lock);
+    // lock_acquire(&page_table_lock);
     bool result = (pml4_get_page(t->pml4, upage) == NULL && pml4_set_page(t->pml4, upage, kpage, writable));
-    lock_release(&page_table_lock);
+    // lock_release(&page_table_lock);
 
     /* Upage로 대변되는 가상주소에 페이지가 없는지 확인하고, 맞다면 페이지테이블에 삽입 */
     return result;
