@@ -22,6 +22,15 @@ static struct frame *vm_evict_frame(void);
 static bool install_page(void *upage, void *kpage, bool writable);
 void destroy_page(struct hash_elem *e, void *aux);
 
+/* Global Tables (or lists) */
+struct frame_table frame_table;
+struct swap_table swap_table;
+
+/* Global Synchronization Primitives */
+struct lock page_table_lock;
+struct lock frame_table_lock;
+struct lock swap_table_lock;
+
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////////// Virtual Memory System Init ////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -43,8 +52,16 @@ void vm_init(void) {
 
     /* DO NOT MODIFY UPPER LINES ; 수정은 이 아래로부터만 진행 */
 
-    /* @@@@@@@@@@ TODO: Your code goes here. @@@@@@@@@@ */
-    // eg: Frame-table 및 Swap-table 초기화도 추가
+    /* Page-table Related */
+    lock_init(&page_table_lock); // 5개 모두 Global Variable로 선언되어 Data/BSS에 속함 (Palloc/Malloc/Calloc 불필요)
+
+    /* Frame-table Related */
+    lock_init(&frame_table_lock);
+    list_init(&frame_table.frame_table_list);
+
+    /* Swap-table Related */
+    lock_init(&swap_table_lock);
+    list_init(&swap_table.swap_table_list);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -281,6 +298,7 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
         if (USER_STACK - (uintptr_t)addr > STACK_RESERVED_SIZE) { // 만일 1MB를 넘어가면 중지
             return false;
         }
+        addr = pg_round_down(addr);
         return vm_claim_page(addr); // 1MB를 넘지 않는다면 스택 연장
     }
     // if (addr == (void *)f->rsp) {
@@ -546,9 +564,12 @@ bool page_less_func(const struct hash_elem *a, const struct hash_elem *b, void *
 static bool install_page(void *upage, void *kpage, bool writable) {
 
     struct thread *t = thread_current();
+    lock_acquire(&page_table_lock);
+    bool result = (pml4_get_page(t->pml4, upage) == NULL && pml4_set_page(t->pml4, upage, kpage, writable));
+    lock_release(&page_table_lock);
 
     /* Upage로 대변되는 가상주소에 페이지가 없는지 확인하고, 맞다면 페이지테이블에 삽입 */
-    return (pml4_get_page(t->pml4, upage) == NULL && pml4_set_page(t->pml4, upage, kpage, writable));
+    return result;
 }
 
 /* supplemental_page_table_kill()에서 사용됨 */

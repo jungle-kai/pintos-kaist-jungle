@@ -290,4 +290,5 @@ make clean
 make
 cd build
 source ../../activate
-$PT_GROW_BAD
+$PAGE_MERGE_MM
+# $PAGE_SHUFFLE

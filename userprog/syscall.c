@@ -398,6 +398,13 @@ int read(int fd, void *buffer, unsigned size) {
 
         exit(-1);
     }
+
+    /* 버퍼의 위치가 Writable하지 않다면 */
+    uint64_t *pte = pml4e_walk(thread_current()->pml4, buffer, 0);
+    if (*pte && !is_writable(pte)) {
+        exit(-1);
+    }
+
     /* 읽어온 바이트 수를 기록할 변수 초기화 */
     int read_count = 0;
 
