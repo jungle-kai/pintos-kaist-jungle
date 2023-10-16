@@ -36,7 +36,8 @@ int write(int fd, const void *buffer, unsigned size);
 void seek(int fd, unsigned position);
 unsigned tell(int fd);
 void close(int fd);
-
+void* mmap(void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap(void* addr);
 /* File Descriptor 관련 함수 Prototype & Global Variables */
 int allocate_fd(struct file *file);
 struct file *get_file_from_fd(int fd);
@@ -142,6 +143,14 @@ void syscall_handler(struct intr_frame *f) {
 
     case SYS_CLOSE:
         close(f->R.rdi);
+        break;
+
+    case SYS_MMAP:
+        f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+        break;
+    
+    case SYS_MUNMAP:
+        munmap(f->R.rdi);
         break;
 
     default:
@@ -611,4 +620,26 @@ static bool put_user(uint8_t *udst, uint8_t byte) {
                      : "=&a"(error_code), "=m"(*udst)
                      : "q"(byte));
     return error_code != -1;
+}
+
+void* mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
+    // stdin, stdout 매핑 요구시 NULL 반환
+    if (fd == 0 || fd == 1) {
+        return NULL;
+    }
+
+    struct file *f = get_file_from_fd(fd);
+    off_t file_len = file_length(f);
+    length = length > file_len ? file_len : length; 
+    void* va = NULL;
+
+    if (f) {
+        va = do_mmap(addr, length, writable, f, offset);
+    }
+
+    return va;
+}
+
+void munmap(void* addr) {
+    do_munmap(addr);
 }

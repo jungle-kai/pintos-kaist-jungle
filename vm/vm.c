@@ -9,6 +9,8 @@
 #include "threads/pte.h"
 #include <hash.h> // SPT 해시테이블을 위해서 추가
 
+struct list frame_list;
+struct lock page_table_lock;
 // #define VM
 // clang-format on
 
@@ -19,7 +21,8 @@ void vm_init(void) {
 
     vm_anon_init();
     vm_file_init();
-    // list_init(&frame_list);
+    lock_init(&page_table_lock);
+    list_init(&frame_list);
 
 #ifdef EFILESYS /* For project 4 */
     pagecache_init();
@@ -225,6 +228,7 @@ static struct frame *vm_get_frame(void) {
 
     /* @@@@@@@@@@ TODO: Fill this function. @@@@@@@@@@ */
     struct frame* frame = (struct frame*)calloc(1, sizeof(struct frame));
+    ASSERT(frame != NULL);
     if (frame == NULL) {
         return NULL;
     }
@@ -232,6 +236,7 @@ static struct frame *vm_get_frame(void) {
     frame->kva = palloc_get_page(PAL_USER | PAL_ZERO);
 
     // 페이지 할당 실패 -> evict policy 결과로 얻은 frame 반환
+    ASSERT(frame->kva != NULL);
     if (frame->kva == NULL) {
         free(frame);
         frame = vm_evict_frame(); // vm_evict_frame() 반환되는 frame은 kva에 이미 물리페이지 주소가 들어있는가?
@@ -270,8 +275,8 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
     /* Page Fault 발생 시 처음 Invoke 되는 함수.
        Fault 발생 사유에 따라서 어떤 조치가 필요한지 확인하고, 해당 액션을 통해서 페이지를 확보해오는 함수. */
     /* @@@@@@@@@@ TODO: Validate the fault @@@@@@@@@@ */
-
-    struct supplemental_page_table *spt UNUSED = &thread_current()->spt;
+    struct thread* t = thread_current();
+    struct supplemental_page_table *spt UNUSED = &t->spt;
     struct page *page = NULL;
 
     /* 1. 유효한 페이지 폴트인지 검사 */
@@ -287,13 +292,16 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
 
     page = spt_find_page(spt, rounded_addr);
 
+    // printf("fault address: %p\n rounded: %p\n", addr, rounded_addr);
     // spt에 등록조차 되지 않은 경우
     if (page == NULL) {
         // 스택 크기를 늘려야 하는 경우(addr과 rsp 비교)
         if (pg_round_up(addr) >= f->rsp) { // 내일 up한거 돌려라
             return vm_claim_page(addr);
         }
-
+        // if (pg_round_up(addr) >= f->rsp) { // 내일 up한거 돌려라
+        //     return vm_claim_page(pg_round_down(addr));
+        // }
         // 아예 잘못된 주소(??)에 접근한 경우
         return false;
     }

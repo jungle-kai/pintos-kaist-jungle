@@ -35,12 +35,12 @@ enum vm_type {
 #include "vm/file.h"
 #include "vm/uninit.h"
 #include "lib/kernel/hash.h"
+#include "lib/kernel/list.h"
 #ifdef EFILESYS
 #include "filesys/page_cache.h"
 #endif
 
-struct page_operations;
-struct thread;
+
 
 #define VM_TYPE(type) ((type)&7)
 
@@ -80,13 +80,14 @@ struct page {
 /* The representation of "frame" */
 /* 프레임 구조체 */
 
-// struct list frame_list;
-
 struct frame {
     void *kva; // kernel virtual address. 커널 가상 주소. palloc_get_page()의 반환값 넣어줌
     struct page *page; // 프레임과 연결된 가상페이지의 보조 page struct
     struct list_elem frame_elem;
 };
+
+
+
 
 /* The function table for page operations.
  * This is one way of implementing "interface" in C.
@@ -122,8 +123,8 @@ struct supplemental_page_table {
 	// hash 초기화 필요, hash할 데이터 = page
 	struct hash hash;
 };
-
 #include "threads/thread.h"
+extern struct list frame_table;
 void destory_page (struct hash_elem *e, void *aux);
 void supplemental_page_table_init(struct supplemental_page_table *spt);
 bool supplemental_page_table_copy(struct supplemental_page_table *dst, struct supplemental_page_table *src);
@@ -140,5 +141,4 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
 void vm_dealloc_page(struct page *page);
 bool vm_claim_page(void *va);
 enum vm_type page_get_type(struct page *page);
-
 #endif /* VM_VM_H */

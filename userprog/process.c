@@ -795,7 +795,7 @@ static bool install_page(void *upage, void *kpage, bool writable) {
     return (pml4_get_page(t->pml4, upage) == NULL && pml4_set_page(t->pml4, upage, kpage, writable));
 }
 
-static bool lazy_load_segment(struct page *page, void *aux) {
+bool lazy_load_segment(struct page *page, void *aux) {
     /* TODO: Load the segment from the file */
 
     /* TODO: This called when the first page fault occurs on address VA. */
@@ -813,7 +813,9 @@ static bool lazy_load_segment(struct page *page, void *aux) {
         // palloc_free_page(kpage);
         return false;
     }
-    memset(kpage + f_info->page_read_bytes, 0, f_info->page_zero_bytes);
+    if (f_info->page_zero_bytes > 0) {
+        memset(kpage + f_info->page_read_bytes, 0, f_info->page_zero_bytes);
+    }
 
     free(aux);
     return true;
