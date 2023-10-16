@@ -802,41 +802,21 @@ static bool lazy_load_segment(struct page *page, void *aux) {
 
     /* TODO: VA is available when calling this function. */
 
-            /* Get a page of memory. */
-        uint8_t *kpage = page->frame->kva;
-        bool writable;
-        if (kpage == NULL)
-            return false;
+    uint8_t *kpage = page->frame->kva;
+    struct file_info* f_info = (struct file_info*)aux;
 
-        // 스택 페이지면 aux가 NULL인데, 차후에 멤버변수에 넣던지 하기
-        if (aux == NULL) {
-            writable = true;
-        }
-        // 그밖엔 파일페이지
-        else {
-            struct file_info* f_info = (struct file_info*)aux;
-            writable = f_info->writable;
+    /* Load this page. */
+    file_seek(f_info->file, f_info->offset);
+    if (file_read(f_info->file, kpage, f_info->page_read_bytes) != (int)(f_info->page_read_bytes)) {
+        // 파일 read 실패했을 때, load는 fail로 되면서 프로그램 끝남
+        destroy(page);
+        // palloc_free_page(kpage);
+        return false;
+    }
+    memset(kpage + f_info->page_read_bytes, 0, f_info->page_zero_bytes);
 
-            /* Load this page. */
-            file_seek(f_info->file, f_info->offset);
-            if (file_read(f_info->file, kpage, f_info->page_read_bytes) != (int)(f_info->page_read_bytes)) {
-                // 파일 read 실패했을 때, load는 fail로 되면서 프로그램 끝남
-                palloc_free_page(kpage);
-                return false;
-            }
-            memset(kpage + f_info->page_read_bytes, 0, f_info->page_zero_bytes);
-        }
-
-        // /* 페이지를 프로세스 주소공간에 추가함*/
-        // if (!install_page(page->va, kpage, writable)) {
-        //     printf("fail\n");
-        //     palloc_free_page(kpage);
-        //     return false;
-        // }
-        
-        // file_info 다 썼으면 해제해도 됨
-        free(aux);
-        return true;
+    free(aux);
+    return true;
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -899,36 +879,12 @@ static bool setup_stack(struct intr_frame *if_) {
      * TODO: If success, set the rsp accordingly.
      * TODO: You should mark the page is stack. */
     /* TODO: Your code goes here */
-    
-    if (vm_alloc_page_with_initializer(VM_ANON, stack_bottom, 1, lazy_load_segment, NULL)) {
+
+    if (vm_claim_page(stack_bottom)) {
         if_->rsp = USER_STACK; // stack_bottom은 스택을 확장시켜준 것 뿐이고, 아직 rsp는 USER_STACK이다.
         return true;
     }
     return false;
-    
-    // if (vm_alloc_page_with_initializer(VM_ANON, stack_bottom, 1, lazy_load_segment, NULL)) {
-    //     if_->rsp = USER_STACK; // stack_bottom은 스택을 확장시켜준 것 뿐이고, 아직 rsp는 USER_STACK이다.
-    //     return true;
-    // }
-
- 
-
-
-    // 기존 코드
-    /*
-        uint8_t *kpage;
-        bool success = false;
-
-        kpage = palloc_get_page(PAL_USER | PAL_ZERO);
-        if (kpage != NULL) {
-            success = install_page(((uint8_t *)USER_STACK) - PGSIZE, kpage, true);
-            if (success)
-                if_->rsp = USER_STACK;
-            else
-                palloc_free_page(kpage);
-        }
-        return success;
-    */
 }
 
 #endif /* VM */

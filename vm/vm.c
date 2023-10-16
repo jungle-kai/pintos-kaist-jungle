@@ -6,6 +6,7 @@
 #include "userprog/process.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
+#include "threads/pte.h"
 #include <hash.h> // SPT 해시테이블을 위해서 추가
 
 // #define VM
@@ -100,7 +101,7 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
 
         // 페이지 구조체 생성 실패시 처리
         if (page == NULL) {
-            ;
+            return false;
         }
 		// 타입별로 초기화 함수 호출해서 page 초기화
 
@@ -275,14 +276,42 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
 
     /* 1. 유효한 페이지 폴트인지 검사 */
     // stack 생각, stack overflow 생각, stack이랑 멀리 떨어졌을 경우, code segment 접근 경우
-    // ->  
-
-    /* 2. 유효하다면, fault발생된 addr 가상 주소를 가지고 spt에 접근해서 page 구조체를 구한다. */
-    // printf("페이지폴트 주소!!: %p\n", addr); 
-    addr = pg_round_down(addr);
-    // printf("ROUNDED 페이지폴트 주소!!: %p\n\n", addr); 
     
-    page = spt_find_page(spt, addr);
+    // 유저모드인데 접근하면 안되는 주소에 접근한 경우
+    if (user && (addr > USER_STACK || is_kernel_vaddr(addr))) {
+        return false;
+    }
+    
+    void* rounded_addr = pg_round_down(addr);
+    // printf("ROUNDED 페이지폴트 주소!!: %p\n\n", rounded_addr); 
+
+    page = spt_find_page(spt, rounded_addr);
+
+    // spt에 등록조차 되지 않은 경우
+    if (page == NULL) {
+        // 스택 크기를 늘려야 하는 경우(addr과 rsp 비교)
+        if (pg_round_up(addr) >= f->rsp) { // 내일 up한거 돌려라
+            return vm_claim_page(addr);
+        }
+
+        // 아예 잘못된 주소(??)에 접근한 경우
+        return false;
+    }
+
+    // ASSERT(!(page->frame->kva != NULL && ((vtop(page->frame->kva) & PTE_W) & write)));
+
+    // if (page->frame->kva != NULL && !vtop(page->frame->kva) & PTE_W) {
+    //     return false;
+    // }
+
+    // 그 외의 경우.
+    return vm_do_claim_page(page);
+
+    
+
+
+    
+    
 
     // page NULL 체크
     /* 3. page를 가지고 uninit_initialize() 함수 호출.
@@ -291,11 +320,6 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
     // 유효한 page fault일 때,
     // page를 claim해서 frame을 만들어 page와 연결
 
-    if (!page) {
-        return false;
-    }
-
-    return vm_do_claim_page(page);
 
     // res = vm_do_claim_page(page);
     // return res;
@@ -364,31 +388,41 @@ bool vm_claim_page(void *va UNUSED) {
 
     // 우선, va에 대해 이미 만들어져 있던 page면 -1 리턴
     struct page *page = NULL;
-    struct supplemental_page_table spt = thread_current()->spt;
+    struct supplemental_page_table* spt = &thread_current()->spt;
 
     // spt에 들어가 있지 않았던 것일 때,
     va = pg_round_down(va);
 
-    if (spt_find_page(&spt, va) != NULL) {
+    if (spt_find_page(spt, va) != NULL) {
         // 들어가 있던거면 오류, false 리턴
         return false;
     }
 
-    // 페이지 구조체 만들고,
-    page = (struct page*)calloc(1, sizeof(struct page));
+    if(!vm_alloc_page(VM_ANON, va, true)) {
+        return false;
+    }
 
-    // 생성 못했으면 false 리턴
+    page = spt_find_page(spt, va);
+
     if (page == NULL) {
         return false;
     }
 
-    // 페이지 초기화(ANON 타입)
-    uninit_new(page, va, NULL, VM_ANON, NULL, anon_initializer);
+    // // 페이지 구조체 만들고,
+    // page = (struct page*)calloc(1, sizeof(struct page));
 
-    // spt에 넣고,
-    if (!spt_insert_page(&spt, page)) {
-        return false;
-    }
+    // // 생성 못했으면 false 리턴
+    // if (page == NULL) {
+    //     return false;
+    // }
+
+    // // 페이지 초기화(ANON 타입)
+    // uninit_new(page, va, NULL, VM_ANON, NULL, anon_initializer);
+    // page->writable = true;
+    // // spt에 넣고,
+    // if (!spt_insert_page(&spt, page)) {
+    //     return false;
+    // }
 
     // 해당 페이지 구조체와 frame을 연결시킴
     return vm_do_claim_page(page);
@@ -451,8 +485,6 @@ void supplemental_page_table_init(struct supplemental_page_table *spt UNUSED) {
 
 /* Copy supplemental page table from src to dst */
 bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED, struct supplemental_page_table *src UNUSED) {
-    dst->hash.elem_cnt = src->hash.elem_cnt;
-
     struct hash_iterator i;
     bool result = true;
     hash_first (&i, &src->hash);
