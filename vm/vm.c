@@ -181,8 +181,8 @@ void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
 
     /* 페이지의 SPT에서 특정 페이지를 제거하는 함수 */
 
+    hash_delete(&spt->hash, &page->spt_hash_elem);
     vm_dealloc_page(page);
-    return true;
 }
 
 /* Get the struct frame, that will be evicted. */
@@ -299,18 +299,10 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
         if (pg_round_up(addr) >= f->rsp) { // 내일 up한거 돌려라
             return vm_claim_page(addr);
         }
-        // if (pg_round_up(addr) >= f->rsp) { // 내일 up한거 돌려라
-        //     return vm_claim_page(pg_round_down(addr));
-        // }
+
         // 아예 잘못된 주소(??)에 접근한 경우
         return false;
     }
-
-    // ASSERT(!(page->frame->kva != NULL && ((vtop(page->frame->kva) & PTE_W) & write)));
-
-    // if (page->frame->kva != NULL && !vtop(page->frame->kva) & PTE_W) {
-    //     return false;
-    // }
 
     // 그 외의 경우.
     return vm_do_claim_page(page);

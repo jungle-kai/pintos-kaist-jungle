@@ -350,13 +350,14 @@ int open(const char *file) {
     if (!pointer_validity_check(file)) {
         exit(-1);
     }
-
     /* 파일을 열어보려고 시도하고, 실패시 -1 반환 (struct file 필수) */
     struct file *opened_file;
+    sema_down(&filesys_sema);
     opened_file = filesys_open(file); // *file의 주소 file
     if (!opened_file) {
         return -1;
     }
+    sema_up(&filesys_sema);
 
     /* 만일 파일이 실행중이라면 수정 금지 */
     if (strcmp(thread_current()->name, file) == 0) {
@@ -372,6 +373,7 @@ int open(const char *file) {
         return -1;
     }
 
+    
     /* 여기까지 왔으면 성공했으니 fd값 반환 */
     return fd;
 }
@@ -398,6 +400,7 @@ int filesize(int fd) {
    fd 0은 input_getc()를 통해서 키보드 입력값을 읽어옴. */
 int read(int fd, void *buffer, unsigned size) {
 
+    
     if (!buffer_validity_check(buffer, size)) {
 
         exit(-1);
@@ -466,7 +469,6 @@ int write(int fd, const void *buffer, unsigned size) {
 
     int bytes_written = file_write(file_to_write, buffer, size);
 
-    // sema_up(&filesys_sema);
 
     return bytes_written;
 }
@@ -628,13 +630,27 @@ void* mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
         return NULL;
     }
 
-    struct file *f = get_file_from_fd(fd);
-    off_t file_len = file_length(f);
-    length = length > file_len ? file_len : length; 
-    void* va = NULL;
+    // 읽을 길이가 0이면 NULL
+   if (length == 0) {
+        return NULL;
+   }
 
-    if (f) {
-        va = do_mmap(addr, length, writable, f, offset);
+    // 매핑될 시작 가상주소가 page_aligned 아니면 NULL
+   if ((char)addr % PGSIZE != 0) {
+        return NULL;
+   }
+
+    struct file* origin_file = get_file_from_fd(fd);
+    struct thread* t = thread_current();
+    void* va = NULL;
+    if (origin_file) {
+        lock_acquire(&t->mmap_lock);
+        struct file* new_file = file_reopen(origin_file);
+        off_t file_len = file_length(new_file);
+        length = length > file_len ? file_len : length; 
+
+        va = do_mmap(addr, length, writable, new_file, offset);
+        lock_release(&t->mmap_lock);
     }
 
     return va;

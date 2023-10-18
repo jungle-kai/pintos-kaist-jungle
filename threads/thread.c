@@ -161,7 +161,7 @@ tid_t thread_create(const char *name, int priority, thread_func *function, void 
     /* fd_table의 메모리 부여 및 락 초기화가 여기서 일어나야 문제가 없음 */
     t->fd_table = (struct file **)palloc_get_page(PAL_ZERO); // Kernel-side에 0으로 초기화된 페이지를 새로 Allocate
     lock_init(&t->fd_lock);
-
+    lock_init(&t->mmap_lock);
     /* 스레드 생성 시점부터 parent의 children list에 바로 추가 */
     list_push_back(&thread_current()->children_list, &t->child_elem); // 부모 스레드의 children_list에 자식 스레드를 추가
     t->parent_is = thread_current();

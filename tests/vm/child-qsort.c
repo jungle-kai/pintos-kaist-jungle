@@ -20,7 +20,7 @@ main (int argc UNUSED, char *argv[])
 
   quiet = true;
 
-  CHECK ((handle = open (argv[1])) > 1, "open \"%s\"", argv[1]);
+  CHECK ((handle = open (argv[1])) > 1, "child_open \"%s\"", argv[1]);
 
   size = read (handle, buf, sizeof buf);
   qsort_bytes (buf, sizeof buf);

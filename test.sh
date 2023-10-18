@@ -290,4 +290,4 @@ make clean
 make
 cd build
 source ../../activate
-$PAGE_MERGE_MM
+$MMAP_UNMAP

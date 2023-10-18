@@ -17,5 +17,6 @@ struct file_info {
     size_t page_zero_bytes;
     off_t offset;
     bool writable;
+    void* init_mapped_va;
 };
 #endif /* userprog/process.h */

@@ -121,6 +121,7 @@ struct thread {
 
     /* File Descriptor 관리를 위한 멤버 */
     struct lock fd_lock;    // Allocate_fd()에서 사용되는 락, per thread
+    struct lock mmap_lock;
     struct file **fd_table; // File Descriptor Table ; init_thread에서 한번 초기화
 
     /* process_wait() 및 exit()을 위해서 추가된 멤버 */
