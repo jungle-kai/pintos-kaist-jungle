@@ -7,6 +7,8 @@
 #include "userprog/process.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
+#include "bitmap.h" // Swap Table
+#include "devices/disk.h" // Swap Table
 #include <hash.h> // SPT 해시테이블을 위해서 추가
 #include <list.h> // list 관련 추가
 
@@ -24,12 +26,12 @@ void destroy_page(struct hash_elem *e, void *aux);
 
 /* Global Tables (or lists) */
 struct frame_table frame_table;
-struct swap_table swap_table;
+struct disk *swap_disk;
+struct bitmap *swap_bitmap;
 
 /* Global Synchronization Primitives */
 struct lock page_table_lock;
 struct lock frame_table_lock;
-struct lock swap_table_lock;
 
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////////// Virtual Memory System Init ////////////////////////////
@@ -57,11 +59,15 @@ void vm_init(void) {
 
     /* Frame-table Related */
     // lock_init(&frame_table_lock);
-    list_init(&frame_table.frame_table_list);
+    frame_table.frame_table_list = malloc(sizeof(struct list));
+    if (frame_table.frame_table_list == NULL) {
+        PANIC("Failed to allocate memory for frame table list.");
+    }
+    list_init(frame_table.frame_table_list);
 
-    /* Swap-table Related */
-    // lock_init(&swap_table_lock);
-    // list_init(&swap_table.swap_table_list);
+    /* Swap-table은 bitmap으로 */
+    swap_disk = disk_get(1, 1);                        // Swap Disk 번호 (1, 1)
+    swap_bitmap = bitmap_create(disk_size(swap_disk)); // Sector 개수와 동일한 크기의 bitmap 생성
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -212,9 +218,8 @@ static struct frame *vm_get_victim(void) {
 
     /* LRU 등 팀에서 정한 알고리즘을 활용, DRAM에서 쫒아낼 Present Upage를 선정하는 함수. */
 
-    struct frame *victim = NULL;
-
-    /* @@@@@@@@@@ TODO: The policy for eviction is up to you. @@@@@@@@@@*/
+    struct list_elem *victim_elem = list_pop_front(frame_table.frame_table_list); // FIFO not LRU
+    struct frame *victim = list_entry(victim_elem, struct frame, frame_list_elem);
 
     return victim;
 }
@@ -225,11 +230,13 @@ static struct frame *vm_evict_frame(void) {
 
     /* vm_get_victim()으로 선정한 페이지를 DRAM에서 쫒아내는 함수. */
 
-    struct frame *victim UNUSED = vm_get_victim();
+    struct frame *victim = vm_get_victim();
 
-    /* @@@@@@@@@@ TODO: swap out the victim and return the evicted frame. @@@@@@@@@@ */
+    swap_out(victim->page);
+    victim->page->frame = NULL;
+    victim->page = NULL;
 
-    return NULL;
+    return victim;
 }
 
 /* palloc() and get frame. If there is no available page, evict the page
@@ -251,6 +258,7 @@ static struct frame *vm_get_frame(void) {
         free(frame);
         frame = vm_evict_frame();
     }
+    list_push_back(frame_table.frame_table_list, &frame->frame_list_elem);
 
     ASSERT(frame != NULL);
     ASSERT(frame->page == NULL);
@@ -298,9 +306,6 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
         addr = pg_round_down(addr);
         return vm_claim_page(addr); // 1MB를 넘지 않는다면 스택 연장
     }
-    // if (addr == (void *)f->rsp) {
-    //     return vm_claim_page(addr);
-    // }
 
     /* (3) Locate page in thread's SPT ; 스레드가 보유한게 맞는지 확인 */
     addr = pg_round_down(addr);
@@ -399,6 +404,8 @@ static bool vm_do_claim_page(struct page *page) {
 
     /* SPT가 아닌 실제 PT에 PTE를 생성/삽입해서 연결 */
     if (!install_page(page->va, frame->kva, page->writable)) {
+        frame->page = NULL;
+        page->frame = NULL;
         palloc_free_page(frame->kva);
         return false;
     }
@@ -406,15 +413,6 @@ static bool vm_do_claim_page(struct page *page) {
     /* 페이지 삽입 */
     bool result = swap_in(page, frame->kva);
     return result;
-
-    // uint64_t *pml4 = thread_current()->pml4;
-    // if (!pml4_set_page(pml4, page->va, frame->kva, true)) { // pml4_set_page(uint64_t *pml4, void *upage, void *kpage, bool rw)
-    //     frame->page = NULL;
-    //     page->frame = NULL;
-    //     return false;
-    // }
-    // /* 페이지를 frame에 삽입하는 과정으로 보임 (조금 찝찝한데 원래 있던 코드) */
-    // return swap_in(page, frame->kva);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -445,7 +443,12 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst, struct su
     while (hash_next(&i)) {
 
         /* 먼저 부모의 Page 구조체를 확보하고, 새로운 페이지를 만들기 (단순히 페이지 복사가 아닌 복제니까) */
+        /* 단, 부모의 페이지 타입이 VM_FILE이면 MMAP이기 때문에 건너뛰고 카피해야 함 (mmap은 카피하지 않음) */
         struct page *parent_page = hash_entry(i.elem, struct page, spt_hash_elem);
+        if (parent_page->uninit.type == VM_FILE || parent_page->PAGE_TYPE == VM_FILE) {
+            continue;
+        }
+
         struct page *new_page = (struct page *)calloc(1, sizeof(struct page));
         if (new_page == NULL) {
             return false;
@@ -501,12 +504,6 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst, struct su
         /* Destination SPT에 새로 만든 페이지를 복사하는데, 실패시 Free 해주기 */
         if (!spt_insert_page(dst, new_page)) {
 
-            /* 만일 프레임을 가지고 있었다면 프레임 Dealloc */
-            if (new_page->frame) {
-                /* @@@@@@@@@@ TODO @@@@@@@@@@ */
-                // vm_dealloc_frame(new_page->frame) 형태로, 프레임 제거 (evict 완성후 채우기)
-            }
-
             /* 프레임 유무와 관계없이 페이지와 관련된 메모리 Free */
             free(new_page);
             return false;
@@ -514,16 +511,16 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst, struct su
     }
 
     // /* 복사 작업이 끝났는데 뭔가 안맞는다면 Copy Failed 에러 주기 */
-    if (dst->spt_hash_table.elem_cnt != src->spt_hash_table.elem_cnt) {
-        PANIC("Supplementary Page Table Copy Failed");
-    }
+    // if (dst->spt_hash_table.elem_cnt != src->spt_hash_table.elem_cnt) {
+    //     PANIC("Supplementary Page Table Copy Failed");
+    // } // 안맞을수 있음 (VM_FILE은 안하니까)
 
     return true;
 }
 
 /* Free the resource hold by the supplemental page table */
 /* SPT에 속한 페이지를 전부 삭제하고, 수정된 컨텐츠들을 디스크에 다시 저장하는 함수. */
-void supplemental_page_table_kill(struct supplemental_page_table *spt UNUSED) {
+void supplemental_page_table_kill(struct supplemental_page_table *spt) {
 
     /* 해시테이블을 순회하면서 모든 페이지에 destroy_page()를 적용 */
     hash_destroy(&spt->spt_hash_table, destroy_page);
@@ -568,6 +565,8 @@ static bool install_page(void *upage, void *kpage, bool writable) {
 void destroy_page(struct hash_elem *e, void *aux) {
 
     struct page *page = hash_entry(e, struct page, spt_hash_elem);
+    struct hash *spt_table = &thread_current()->spt.spt_hash_table;
+    hash_delete(spt_table, e);
 
     vm_dealloc_page(page);
 }

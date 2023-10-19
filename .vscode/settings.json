@@ -65,6 +65,8 @@
         "random.h": "c",
         "debug.h": "c",
         "stdio.h": "c",
-        "intr-stubs.h": "c"
+        "intr-stubs.h": "c",
+        "bitmap.h": "c",
+        "disk.h": "c"
     }
 }

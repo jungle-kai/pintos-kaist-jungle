@@ -47,7 +47,7 @@ int allocate_fd(struct file *file);
 struct file *get_file_from_fd(int fd);
 void release_fd(int fd);
 void close_file(int fd);
-// fd_table_destroy는 syscall.h로 이동
+// fd_table_close는 syscall.h로 이동
 
 struct semaphore filesys_sema; // 파일시스템 동기화를 위한 세마포어
 
@@ -518,12 +518,17 @@ void close(int fd) {
 
 void *mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
 
-    /* (1~2) fd값이 STDIN STDOUT이면 예외처리 */
-    if (fd == 0 || fd == 1) {
+    /* fd값이 STDIN STDOUT이면 예외처리 */
+    if (fd == 0 || fd == 1 || fd > 128) {
         return NULL;
     }
 
-    /* (3~4) addr이 커널이거나, 사이즈가 딱 4KB 단위로 전달된게 아니라면 예외처리 */
+    /* length나 Offset 값이 잘못되었을 경우 예외처리 */
+    if ((long)length <= 0 || offset < 0 || offset % PGSIZE != 0) {
+        return NULL;
+    }
+
+    /* addr이 커널이거나, 사이즈가 딱 4KB 단위로 전달된게 아니라면 예외처리 */
     if (addr == NULL || is_kernel_vaddr(addr) || (uint64_t)addr % PGSIZE != 0) {
         return NULL;
     }
@@ -531,6 +536,13 @@ void *mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
     /* 주어진 fd를 기반으로 매핑할 파일을 추출 */
     struct thread *curr = thread_current();
     struct file *file_to_map = get_file_from_fd(fd);
+    if (!file_to_map) {
+        return NULL;
+    }
+
+    if (offset > file_length(file_to_map)) {
+        return NULL;
+    }
 
     /* 반환할 va를 우선 NULL로 초기화*/
     void *va = NULL;

@@ -70,6 +70,7 @@ struct page {
 struct frame {
     void *kva;
     struct page *page;
+    struct list_elem frame_list_elem;
 };
 
 /* The function table for page operations.
@@ -104,25 +105,19 @@ struct frame_table {
 };
 
 // (3) 프레임 테이블에 들어가는 구조체
-struct frame_table_entry {
-    struct frame *frame;  // 각각의 프레임을 향하는 포인터
-    struct thread *owner; // 보유한 스레드를 향하는 포인터
-    bool in_use;          // 현재 사용중인지 기록
-    struct list_elem frame_elem;
-};
+// struct frame_table_entry {
+//     struct frame *frame;  // 각각의 프레임을 향하는 포인터
+//     struct thread *owner; // 보유한 스레드를 향하는 포인터
+//     bool in_use;          // 현재 사용중인지 기록
+//     struct list_elem frame_elem;
+// };
 
-// (4) 스왑테이블 구조체
-struct swap_table {
-    struct list *swap_table_list;
-    size_t size;
-};
-
-// (5) 스왑 테이블에 들어가는 구조체
-struct swap_table_entry {
-    // 스왑 위치를 표시해줘야 함 ; size_t swap_location?
-    struct thread *owner; // 보유한 스레드를 향하는 포인터
-    struct list_elem swap_elem;
-};
+/* For sharing across source files */
+extern struct frame_table frame_table;
+extern struct disk *swap_disk;
+extern struct bitmap *swap_bitmap;
+extern struct lock page_table_lock;
+extern struct lock frame_table_lock;
 
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////////////// 직접 추가한 데이터 구조체 끝 /////////////////////////////

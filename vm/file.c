@@ -6,6 +6,8 @@
 #include "userprog/syscall.h"
 #include "threads/vaddr.h"
 #include "threads/pte.h"
+#include "bitmap.h" // Swap Table
+#include "devices/disk.h" // Swap Table
 #include <hash.h> // SPT 해시테이블을 위해서 추가
 #include <stdlib.h>
 
@@ -32,8 +34,7 @@ static const struct page_operations file_ops = {
 void vm_file_init(void) {
 
     /* File 전용 페이지에 Data를 채워서 초기화 해주는 함수 */
-
-    /* @@@@@@@@@@ Todo @@@@@@@@@@ */
+    /* 딱히 여기서 할게 보이진 않음 (다른곳에서 다 처리) */
 }
 
 /* Initialize the file backed page */
@@ -54,6 +55,8 @@ bool file_backed_initializer(struct page *page, enum vm_type type, void *kva) {
     file_page->zero_bytes = aux->zero_bytes;
     file_page->writable = aux->writable;
     file_page->first_page_va = aux->first_page_va;
+
+    return true;
 }
 
 /* Swap in the page by read contents from the file. */
@@ -80,23 +83,22 @@ static bool file_backed_swap_out(struct page *page) {
 static void file_backed_destroy(struct page *page) {
 
     /* File-backed 페이지와 관련된 리소스를 전부 Free해주는 함수. 파일을 닫는 등의 행위도 일어나야 함. */
-
-    /* @@@@@@@@@@ TODO @@@@@@@@@@ */
+    /* process_exit -> process_cleanup -> spt_kill -> hash_destroy + destroy_page -> vm_dealloc_page -> file_backed_destroy et al */
 
     struct thread *curr = thread_current();
-    struct hash spt_table = curr->spt.spt_hash_table;
+    struct hash *spt_table = &curr->spt.spt_hash_table;
     struct file_page *file_page = &page->file;
 
     /* 해당 페이지를 삭제하게 된다면, dirty할 경우 원래 파일에 저장 ; MMU가 알아서 해준다 함 */
     if (pml4_is_dirty(curr->pml4, page->va)) {
         file_write_at(file_page->origin_file, page->va, file_page->read_bytes, file_page->offset);
-    }
+    } // file_close는 process_exit에서 해줘야 할 것 같음 (fd 접근 어려움)
 
     pml4_clear_page((uint64_t *)curr->pml4, (void *)page->va);
     // free(page->uninit.aux);
     // free(page->frame->kva);
     // free(page->frame);
-    hash_delete(&spt_table, &page->spt_hash_elem);
+    // hash_delete(&spt_table, &page->spt_hash_elem);
 }
 
 /* 파일을 메모리에 매핑하는 함수. 유저의 VA, 바이트 크기, Write 가능여부, 파일 포인터, 그리고 Offset을 활용. */
@@ -133,23 +135,6 @@ void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t 
         zero_bytes += PGSIZE - excess;
     }
 
-    // if (length > file_length(reopened_file)) {
-    //     /* 읽으려는 크기가 파일보다 크다면 */
-    //     read_bytes = file_length(reopened_file);
-    //     zero_bytes = length - file_length(reopened_file);
-    // } else {
-    //     /* 읽으려는 크기가 파일보다 작다면 */
-    //     read_bytes = length;
-    //     zero_bytes = 0;
-    // }
-    // if (length % PGSIZE == 0) {
-    //     /* zero-bytes 추가 세팅 ; 이미 length가 page-size align이라면 건드릴게 없음 */
-    //     zero_bytes += 0;
-    // } else {
-    //     /* zero-bytes 추가 세팅 ; page-size alignment를 위한 추가작업 */
-    //     zero_bytes += PGSIZE - (length % PGSIZE); // zero로 채워야하는 값은 마지막 페이지에만 한정 ; 잔여 length에서 pgsize로 나눈 나머지 값
-    // }
-
     /* 새로 연 파일을 Caller 스레드의 VA에 매핑 */
     if (!load_segment_mmap(reopened_file, offset, addr, read_bytes, zero_bytes, writable)) { // load_segment에 인자를 하나 추가, mmap여부 표시
         return NULL;
@@ -158,6 +143,23 @@ void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t 
     /* 매핑에 성공했으니 */
     return addr;
 }
+
+// if (length > file_length(reopened_file)) {
+//     /* 읽으려는 크기가 파일보다 크다면 */
+//     read_bytes = file_length(reopened_file);
+//     zero_bytes = length - file_length(reopened_file);
+// } else {
+//     /* 읽으려는 크기가 파일보다 작다면 */
+//     read_bytes = length;
+//     zero_bytes = 0;
+// }
+// if (length % PGSIZE == 0) {
+//     /* zero-bytes 추가 세팅 ; 이미 length가 page-size align이라면 건드릴게 없음 */
+//     zero_bytes += 0;
+// } else {
+//     /* zero-bytes 추가 세팅 ; page-size alignment를 위한 추가작업 */
+//     zero_bytes += PGSIZE - (length % PGSIZE); // zero로 채워야하는 값은 마지막 페이지에만 한정 ; 잔여 length에서 pgsize로 나눈 나머지 값
+// }
 
 /* 인자로 제공하는 주소는 파일로 매핑된 첫 페이지의 시작 주소여야 하며, 해당 페이지가 Dirty라면 파일에 다시 저장한 뒤 리소스를 프리하고 파일을 닫는 함수. */
 void do_munmap(void *addr) {
@@ -201,14 +203,7 @@ void do_munmap(void *addr) {
         }
 
         /* 작업이 끝났으니 SPT와 PTE 제거, 프레임에 있었다면 evict */
-        // if (target_page->frame) { // 임시코드 (fb_destroy에서 해주면 삭제 요망)
-        //     free(target_page->frame);
-        // }
         spt_remove_page(spt, target_page); // 여기서 file_backed_destroy까지 가면 Frame도 비워줘야 함
-        // uint64_t *pte = pml4e_walk(curr->pml4, temp_addr, 0);
-        // if (pte) {
-        //     palloc_free_page((void *)PTE_ADDR(pte));
-        // }
 
         /* 다음 페이지로 이동 */
         temp_addr += PGSIZE;
