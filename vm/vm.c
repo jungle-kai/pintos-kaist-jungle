@@ -53,11 +53,11 @@ void vm_init(void) {
     /* DO NOT MODIFY UPPER LINES ; 수정은 이 아래로부터만 진행 */
 
     /* Page-table Related */
-    // lock_init(&page_table_lock); // 5개 모두 Global Variable로 선언되어 Data/BSS에 속함 (Palloc/Malloc/Calloc 불필요)
+    lock_init(&page_table_lock); // 5개 모두 Global Variable로 선언되어 Data/BSS에 속함 (Palloc/Malloc/Calloc 불필요)
 
     /* Frame-table Related */
     // lock_init(&frame_table_lock);
-    // list_init(&frame_table.frame_table_list);
+    list_init(&frame_table.frame_table_list);
 
     /* Swap-table Related */
     // lock_init(&swap_table_lock);
@@ -136,14 +136,6 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
         new_page->writable = writable;
         new_page->PAGE_TYPE = type;
 
-        /* 만일 파일타입을 Alloc하려는게 목적이라면 페이지의 file 포인터를 업데이트 */
-        if (type == VM_FILE) {
-            struct lazy_load_aux *aux_ptr = (struct lazy_load_aux *)aux;
-            new_page->file.origin_file = aux_ptr->file;
-            new_page->file.offset = aux_ptr->offset;
-            new_page->file.read_bytes = aux_ptr->read_bytes;
-        }
-
         /* 초기화된 페이지를 스레드의 SPT에 삽입 */
         if (!spt_insert_page(spt, new_page)) {
             free(new_page);
@@ -206,14 +198,9 @@ void spt_remove_page(struct supplemental_page_table *spt, struct page *page) {
 
     /* hash_delete()는 삭제에 성공한다면 삽입한 elem을 그대로 반환 */
     struct hash_elem *result = hash_delete(&spt->spt_hash_table, &page->spt_hash_elem);
-    if (result == NULL) {
-        return false; // 삭제 실패시 null pointer 반환
-    }
 
     /* 삭제에 성공했으면 페이지 반환*/
     vm_dealloc_page(page);
-
-    return true; // 함수 타입이 void인데 기본적으로 return true가 들어있음 (수정 필요?)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -304,8 +291,8 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
     }
 
     /* (2) Stack 관련이면 여기서 미리 처리 */
-    if (addr <= f->rsp && addr >= f->rsp - (PGSIZE / 4)) {        // Fault 주소가 스택 페이지 바로 다음 페이지 범위 안에 있으면
-        if (USER_STACK - (uintptr_t)addr > STACK_RESERVED_SIZE) { // 만일 1MB를 넘어가면 중지
+    if (addr <= f->rsp && addr >= f->rsp - (PGSIZE / 4)) {       // Fault 주소가 스택 페이지 바로 다음 페이지 범위 안에 있으면
+        if (USER_STACK - (uint64_t)addr > STACK_RESERVED_SIZE) { // 만일 1MB를 넘어가면 중지
             return false;
         }
         addr = pg_round_down(addr);
@@ -327,23 +314,13 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
         return false;
     }
 
-    // /* 이건 왜 안될까 */
-    // uint64_t *pte = pml4e_walk(thread_current()->pml4, (uint64_t)page->va, false);
-    // if (!pte) {
-    //     return false; // Page Table 탐색 실패
-    // }
-    // if (write && !is_writable(pte)) {
-    //     // vm_handle_wp -> 나중에 write protect 페이지에 발생하는 엣지케이스 대응해야 함 (바로 위에 다른 함수)
-    //     return false; // Write Operation인데 해당 페이지는 Write 불가
-    // }
-
     /* (4) 페이지 프레임 확보 */
     if (page->frame == NULL) {
 
         /* Write 때문에 Fault가 생겼다면, 성공 표기 하기 전에 dirty로 표시 */
-        if (write) {
-            pml4_set_dirty(pml4, page->va, true);
-        }
+        // if (write) {
+        //     pml4_set_dirty(pml4, page->va, true);
+        // }
 
         /* Frame의 확보, 페이지와 연결, PTE 생성/삽입, 물리 메모리에 넣는 것까지 전부 vm_do_claim_page 에서 수행 */
         return vm_do_claim_page(page);
@@ -591,5 +568,6 @@ static bool install_page(void *upage, void *kpage, bool writable) {
 void destroy_page(struct hash_elem *e, void *aux) {
 
     struct page *page = hash_entry(e, struct page, spt_hash_elem);
+
     vm_dealloc_page(page);
 }

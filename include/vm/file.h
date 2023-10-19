@@ -10,6 +10,9 @@ struct file_page {
     struct file *origin_file;
     off_t offset;
     uint32_t read_bytes;
+    uint32_t zero_bytes;
+    bool writable;
+    void *first_page_va;
 };
 
 void vm_file_init(void);

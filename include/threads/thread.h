@@ -9,7 +9,8 @@
 #include "threads/interrupt.h"
 #include "threads/synch.h" // fd_lock을 스레드마다 구현하기 위함
 
-// #define VM
+#define USERPROG
+#define VM
 
 #ifdef VM
 #include "vm/vm.h"
@@ -124,7 +125,6 @@ struct thread {
     struct file **fd_table; // File Descriptor Table ; init_thread에서 한번 초기화
 
     /* process_wait() 및 exit()을 위해서 추가된 멤버 */
-
     struct semaphore fork_sema;       // Parent의 process_fork와 Child의 _do_fork 사이에서 활동 (포크 완료 여부)
     struct semaphore wait_sema;       // Parent의 process_wait과 Child의 process_exit 사이에서 활동 (자식 사망 여부)
     struct semaphore free_sema;       // Parent의 process_wait과 Child의 process_exit 사이에서 활동 (진짜 죽어도 되는지 여부)
@@ -145,6 +145,9 @@ struct thread {
 
     /* 현재 스레드가 실행중인 파일 */
     struct file *running_file;
+
+    /* mmap을 위한 lock */
+    struct lock mmap_lock;
 
 #endif
 

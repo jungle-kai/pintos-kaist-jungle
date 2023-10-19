@@ -94,6 +94,7 @@ struct lazy_load_aux {
     uint32_t read_bytes;
     uint32_t zero_bytes;
     bool writable;
+    void *first_page_va;
 };
 
 // (2) 물리 메모리의 프레임을 기록하는 구조체

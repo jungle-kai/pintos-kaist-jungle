@@ -61,7 +61,7 @@ tid_t process_create_initd(const char *file_name) {
 
     /* 스레드 이름 파싱 (테스트 통과용) */
     char *save_ptr;
-    strtok_r(file_name, " ", &save_ptr); //파일이름 파싱
+    strtok_r(file_name, " ", &save_ptr); // 파일이름 파싱
 
     /* file_name을 실행하기 위한 새로운 스레드를 생성 (스레드 이름도 initd) */
     tid = thread_create(file_name, PRI_DEFAULT, initd, fn_copy);
@@ -319,20 +319,6 @@ void process_exit(void) {
 
     /* 열린 파일 전부 닫기*/
     fd_table_close();
-    // int cnt = 2;
-    // while (cnt < 256) {
-    //     if (table[cnt]) {
-    //         file_close(table[cnt]);
-    //         table[cnt] = NULL;
-    //     }
-    //     cnt++;
-    // }
-
-    /* 부모의 wait() 대기 ; 부모가 wait을 해줘야 죽을 수 있음 (한계) */
-    if (curr->parent_is) {
-        sema_up(&curr->wait_sema);
-        sema_down(&curr->free_sema);
-    }
 
     /* 프로세스가 종료되면서, 만일 지금 Running_File이 있었다면 해당 파일 닫기 */
     if (curr->running_file != NULL) {
@@ -343,6 +329,12 @@ void process_exit(void) {
     /* 페이지 테이블 메모리 반환 및 pml4 리셋 */
     palloc_free_page(table);
     process_cleanup();
+
+    /* 부모의 wait() 대기 ; 부모가 wait을 해줘야 죽을 수 있음 */
+    if (curr->parent_is) {
+        sema_up(&curr->wait_sema);
+        sema_down(&curr->free_sema);
+    }
 }
 
 /* 현재 프로세스의 페이지 테이블 매핑을 초기화하고, 커널 페이지 테이블만 남기는 함수 */
@@ -455,7 +447,7 @@ struct ELF64_PHDR {
 void parse_argv_to_stack(char **argv, struct intr_frame *if_);
 static bool setup_stack(struct intr_frame *if_);
 static bool validate_segment(const struct Phdr *, struct file *);
-// static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable);
+static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable); 
 
 /* FILE_NAME에서 ELF Executable을 추출, 현재 스레드에 로딩하는 함수.
    %rip 레지스터에 entry point를 저장하고, %rsp에 스택 포인터도 초기화.
@@ -554,7 +546,7 @@ static bool load(const char *file_name, struct intr_frame *if_) {
                     read_bytes = 0;
                     zero_bytes = ROUND_UP(page_offset + phdr.p_memsz, PGSIZE);
                 }
-                if (!load_segment(file, file_page, (void *)mem_page, read_bytes, zero_bytes, writable))
+                if (!load_segment(file, file_page, (void *)mem_page, read_bytes, zero_bytes, writable)) 
                     goto done;
             } else
                 goto done;
@@ -807,12 +799,15 @@ static bool lazy_load_segment(struct page *page, void *aux) {
    READ_BYTES + ZERO_BYTES 만큼 가상 메모리를 초기화 하는 작업.
    READ_BYTES는 FILE에서 OFS에서부터 발생하며, ZERO_BYTES는 READ_BYTES 이후의 나머지 바이트들.
    여기서 초기화 되는 페이지는 유저 프로세스에 의해서 WRITEABLE 해야 하며, 아니라면 READ_ONLY가 되어야 함.
-   로딩 성공시 TRUE, 실패시 FALSE를 반환해야 함. */
-// static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable) {
-bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable) {
+   로딩 성공시 TRUE, 실패시 FALSE를 반환해야 함. 
+   (중요) Project 3의 mmap에서 이 함수를 사용하기 위해서 static 태그를 제거하고 caller_mmap이라는 Parameter를 추가함. */
+static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable) {
     ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
     ASSERT(pg_ofs(upage) == 0);
     ASSERT(ofs % PGSIZE == 0);
+
+    /* aux에 넣어줄 최초의 upage값 백업 */
+    uint64_t first_mapped_origin = upage;
 
     while (read_bytes > 0 || zero_bytes > 0) {
 
@@ -832,10 +827,10 @@ bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_by
         info->read_bytes = page_read_bytes;
         info->zero_bytes = page_zero_bytes;
         info->writable = writable;
+        info->first_page_va = first_mapped_origin;
 
         /* 만들어둔 데이터 구조체를 사용해서 페이지 초기화 작업 수행 */
-        void *aux = NULL;
-        if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable, lazy_load_segment, info)) {
+        if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable, lazy_load_segment, info)) { 
             free(info);
             return false;
         }

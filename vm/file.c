@@ -3,6 +3,7 @@
 // clang-format off
 #include "vm/vm.h"
 #include "userprog/process.h"
+#include "userprog/syscall.h"
 #include "threads/vaddr.h"
 #include "threads/pte.h"
 #include <hash.h> // SPT 해시테이블을 위해서 추가
@@ -14,6 +15,10 @@
 static bool file_backed_swap_in(struct page *page, void *kva);
 static bool file_backed_swap_out(struct page *page);
 static void file_backed_destroy(struct page *page);
+
+/* Prototype for mmap */
+static bool load_segment_mmap(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable);
+static bool lazy_load_mmap(struct page *page, void *aux);
 
 /* DO NOT MODIFY this struct */
 static const struct page_operations file_ops = {
@@ -32,15 +37,23 @@ void vm_file_init(void) {
 }
 
 /* Initialize the file backed page */
+/* File-backed 페이지를 초기화 하는 전용 함수.
+   vm_alloc_page_with_initializer()에서 사용될 함수로 보임.
+   해당 페이지의 operations 멤버를 file_ops로 정해주는 등. */
 bool file_backed_initializer(struct page *page, enum vm_type type, void *kva) {
 
-    /* File-backed 페이지를 초기화 하는 전용 함수.
-       vm_alloc_page_with_initializer()에서 사용될 함수로 보임.
-       해당 페이지의 operations 멤버를 file_ops로 정해주는 등. */
-
+    /* 원래 포함되어있던 operation으로, page의 function pointer 변경 */
     page->operations = &file_ops;
 
+    /* lazy_load_aux에 담긴 값들을 file_page의 정보로 백업 */
     struct file_page *file_page = &page->file;
+    struct lazy_load_aux *aux = (struct lazy_load_aux *)page->uninit.aux;
+    file_page->origin_file = aux->file;
+    file_page->offset = aux->offset;
+    file_page->read_bytes = aux->read_bytes;
+    file_page->zero_bytes = aux->zero_bytes;
+    file_page->writable = aux->writable;
+    file_page->first_page_va = aux->first_page_va;
 }
 
 /* Swap in the page by read contents from the file. */
@@ -70,7 +83,20 @@ static void file_backed_destroy(struct page *page) {
 
     /* @@@@@@@@@@ TODO @@@@@@@@@@ */
 
-    struct file_page *file_page UNUSED = &page->file;
+    struct thread *curr = thread_current();
+    struct hash spt_table = curr->spt.spt_hash_table;
+    struct file_page *file_page = &page->file;
+
+    /* 해당 페이지를 삭제하게 된다면, dirty할 경우 원래 파일에 저장 ; MMU가 알아서 해준다 함 */
+    if (pml4_is_dirty(curr->pml4, page->va)) {
+        file_write_at(file_page->origin_file, page->va, file_page->read_bytes, file_page->offset);
+    }
+
+    pml4_clear_page((uint64_t *)curr->pml4, (void *)page->va);
+    // free(page->uninit.aux);
+    // free(page->frame->kva);
+    // free(page->frame);
+    hash_delete(&spt_table, &page->spt_hash_elem);
 }
 
 /* 파일을 메모리에 매핑하는 함수. 유저의 VA, 바이트 크기, Write 가능여부, 파일 포인터, 그리고 Offset을 활용. */
@@ -83,21 +109,49 @@ void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t 
 
     /* 매핑하려는 범위가 다른 함수와 중복되지 않도록 검증  */
     struct thread *curr = thread_current();
-    char *target_page = (char *)addr;
-    char *target_last_page = (char *)pg_round_down((char *)addr + length);
+    uint64_t *target_page = (uint64_t *)addr;
+    uint64_t *target_last_page = (uint64_t *)pg_round_down((uint64_t *)addr + length);
     for (target_page; target_page <= target_last_page; target_page += PGSIZE) { // 페이지 단위로 마지막 페이지까지 반복
         if (spt_find_page(&curr->spt, target_page)) {
             return NULL;
         }
     }
 
-    /* 목표 파일을 새로 열어서 기존의 열린 파일들과 분리 */
+    /* 목표 파일을 새로 열어서 기존의 열린 파일들과 분리 (fd는 별도로 안주고 일단 진행해봄) */
     struct file *reopened_file = file_reopen(file);
 
+    /* Read & Zero-bytes 세팅*/
+    uint32_t read_bytes;
+    uint32_t zero_bytes;
+    uint32_t file_len = file_length(reopened_file);
+
+    read_bytes = length > file_len ? file_len : length;
+    zero_bytes = length - read_bytes;
+
+    uint32_t excess = (read_bytes + zero_bytes) % PGSIZE;
+    if (excess) {
+        zero_bytes += PGSIZE - excess;
+    }
+
+    // if (length > file_length(reopened_file)) {
+    //     /* 읽으려는 크기가 파일보다 크다면 */
+    //     read_bytes = file_length(reopened_file);
+    //     zero_bytes = length - file_length(reopened_file);
+    // } else {
+    //     /* 읽으려는 크기가 파일보다 작다면 */
+    //     read_bytes = length;
+    //     zero_bytes = 0;
+    // }
+    // if (length % PGSIZE == 0) {
+    //     /* zero-bytes 추가 세팅 ; 이미 length가 page-size align이라면 건드릴게 없음 */
+    //     zero_bytes += 0;
+    // } else {
+    //     /* zero-bytes 추가 세팅 ; page-size alignment를 위한 추가작업 */
+    //     zero_bytes += PGSIZE - (length % PGSIZE); // zero로 채워야하는 값은 마지막 페이지에만 한정 ; 잔여 length에서 pgsize로 나눈 나머지 값
+    // }
+
     /* 새로 연 파일을 Caller 스레드의 VA에 매핑 */
-    uint32_t read_bytes = length;          // 읽어야 하는 양은 offset에서 부터 length만큼
-    uint32_t zero_bytes = length % PGSIZE; // zero로 채워야하는 값은 length에서 pgsize로 나눈 나머지 값 (마지막 페이지)
-    if (!load_segment(reopened_file, offset, (uint8_t)addr, (uint32_t)read_bytes, (uint32_t)zero_bytes, writable)) {
+    if (!load_segment_mmap(reopened_file, offset, addr, read_bytes, zero_bytes, writable)) { // load_segment에 인자를 하나 추가, mmap여부 표시
         return NULL;
     }
 
@@ -122,42 +176,54 @@ void do_munmap(void *addr) {
         exit(-1);
     }
 
-    /* TODO: 해당 스레드가 mmap된 페이지인지 확인 후 파일을 찾아서, 해당 파일로 mmap된 전체 영역에 걸쳐서 반복문으로 save if dirty + release resources and deallocate frames */
-    /* TODO: 해당 매핑과 관련된 파일을 닫기 */
-
     /* 해당 페이지와 관련된 파일을 찾아서, */
-    struct file *mmap_file = target_page->file.origin_file;
+    struct file *mmap_file = NULL;
+    if (target_page->frame != NULL) { /* 프레임에 로딩된 상태라면 */
+        mmap_file = target_page->file.origin_file;
+    } else { /* 아직 lazy-load 대기중이라면 */
+        struct lazy_load_aux *aux = target_page->uninit.aux;
+        mmap_file = aux->file;
+    }
     if (mmap_file == NULL) {
+        printf("mmap_file not found during do_munmap");
         exit(-1);
     }
 
     /* 반복문으로 파일과 관련된 페이지들을 전부 제거 */
-    void *curr_addr = addr;
+    void *temp_addr = addr;
     while (true) {
 
         /* 만일 각 페이지가 dirty로 태그되었다면 (vm_alloc_page_with_initializer() 참고) */
-        if (pml4_is_dirty(curr->pml4, curr_addr)) {
+        if (pml4_is_dirty(curr->pml4, temp_addr)) {
 
             /* 파일에다가 현재 버퍼 (va)의 내용을 덮어쓰기 (페이지 단위) */
-            file_write_at(mmap_file, curr_addr, target_page->file.read_bytes, target_page->file.offset);
+            file_write_at(mmap_file, temp_addr, target_page->file.read_bytes, target_page->file.offset);
         }
 
         /* 작업이 끝났으니 SPT와 PTE 제거, 프레임에 있었다면 evict */
-        if (target_page->frame) { // 임시코드 (fb_destroy에서 해주면 삭제 요망)
-            free(target_page->frame);
-        }
+        // if (target_page->frame) { // 임시코드 (fb_destroy에서 해주면 삭제 요망)
+        //     free(target_page->frame);
+        // }
         spt_remove_page(spt, target_page); // 여기서 file_backed_destroy까지 가면 Frame도 비워줘야 함
-        uint64_t *pte = pml4e_walk(curr->pml4, curr_addr, 0);
-        if (pte) {
-            palloc_free_page((void *)PTE_ADDR(pte));
-        }
+        // uint64_t *pte = pml4e_walk(curr->pml4, temp_addr, 0);
+        // if (pte) {
+        //     palloc_free_page((void *)PTE_ADDR(pte));
+        // }
 
         /* 다음 페이지로 이동 */
-        curr_addr += PGSIZE;
-        target_page = spt_find_page(spt, curr_addr);
+        temp_addr += PGSIZE;
+        target_page = spt_find_page(spt, temp_addr);
 
-        /* 연속된 페이지가 없거나, 있어도 파일이 같지 않다면 반복문 해제 */
-        if (target_page == NULL || target_page->file.origin_file != mmap_file) {
+        /* 커널로 진입했거나, 연속된 페이지가 없다면 반복문 해제 */
+        if (is_kernel_vaddr(temp_addr) || target_page == NULL) {
+            break;
+        }
+
+        /* 다음 페이지가 있어도 있어도 파일이 같지 않다면 반복문 해제 */
+        struct lazy_load_aux *aux = (struct lazy_load_aux *)target_page->uninit.aux;
+        if (target_page->frame && target_page->file.origin_file != mmap_file) {
+            break;
+        } else if (target_page->frame == NULL && aux->file != mmap_file) {
             break;
         }
     }
@@ -166,4 +232,76 @@ void do_munmap(void *addr) {
     if (mmap_file) {
         file_close(mmap_file);
     }
+}
+
+static bool lazy_load_mmap(struct page *page, void *aux) {
+
+    struct lazy_load_aux *info = (struct lazy_load_aux *)aux;
+
+    if (!info)
+        return false;
+
+    /* 주어진 데이터를 기반으로 파일을 찾기 (현재 핀토스는 FILESYS를 기본 모드로 사용 ; 따라서 디렉토리 하나라 간단함) */
+    file_seek(info->file, info->offset);
+
+    /* 로딩 예정인 페이지의 프레임을 정의하고, */
+    uint8_t *frame_addr = page->frame->kva;
+    if (frame_addr == NULL) {
+        return false;
+    }
+
+    /* 정의한 프레임에다 파일을 불러오면 됨 */
+    if (file_read(info->file, frame_addr, info->read_bytes) != (int)info->read_bytes) {
+        return false; // file_read는 읽어온 byte를 반환하기에, lazy_load_aux로 전달된 양과 비교
+    }
+
+    /* 불러온 영역을 제외한 나머지는 0으로 채워야 함 */
+    memset(frame_addr + info->read_bytes, 0, info->zero_bytes);
+
+    /* 성공 */
+    free(aux);
+    return true;
+}
+
+static bool load_segment_mmap(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable) {
+    ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
+    ASSERT(pg_ofs(upage) == 0);
+    ASSERT(ofs % PGSIZE == 0);
+
+    /* aux에 넣어줄 최초의 upage값 백업 */
+    uint64_t first_mapped_origin = upage;
+
+    while (read_bytes > 0 || zero_bytes > 0) {
+
+        /* FILE에서 PAGE_READ_BYTES를 읽고, 마지막 PAGE_ZERO_BYTES 만큼을 ZERO로 채움 */
+        size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
+        size_t page_zero_bytes = PGSIZE - page_read_bytes;
+
+        /* vm.h에 만든 lazy_load_info 구조를 사용해서 aux로 전달해야 함 ; 일단 메모리 공간 확보 */
+        struct lazy_load_aux *info = (struct lazy_load_aux *)calloc(1, sizeof(struct lazy_load_aux));
+        if (!info) {
+            return false;
+        }
+
+        /* malloc으로 공간을 확보했으니 load_segment()로 전달받은 데이터로 채우기 */
+        info->file = file;
+        info->offset = ofs;
+        info->read_bytes = page_read_bytes;
+        info->zero_bytes = page_zero_bytes;
+        info->writable = writable;
+        info->first_page_va = first_mapped_origin; // mmap의 시작점인 첫 페이지를 기록
+
+        /* 만들어둔 데이터 구조체를 사용해서 페이지 초기화 작업 수행 */
+        if (!vm_alloc_page_with_initializer(VM_FILE, upage, writable, lazy_load_mmap, info)) { // WHY NOT VM_FILE
+            free(info);
+            return false;
+        }
+
+        /* 인자로 주어졌던 값들을 업데이트 */
+        ofs += page_read_bytes; // 이건 직접 추가, 나머지는 이미 있었음
+        read_bytes -= page_read_bytes;
+        zero_bytes -= page_zero_bytes;
+        upage += PGSIZE;
+    }
+    return true;
 }

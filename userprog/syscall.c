@@ -107,6 +107,9 @@ void syscall_handler(struct intr_frame *f) {
 
     case SYS_EXEC:
         f->R.rax = exec(f->R.rdi);
+        if (f->R.rax == -1) {
+            exit(-1);
+        }
         break;
 
     case SYS_WAIT:
@@ -231,7 +234,7 @@ void halt(void) { power_off(); }
 void exit(int status) {
 
     /* 테스트 통과용 printf */
-    printf("%s: exit(%d)\n", thread_current()->name, status); // 이걸 process_exit()으로 옮기면 syn-read가 조금 더 진행됨 (;;)
+    printf("%s: exit(%d)\n", thread_current()->name, status);
 
     /* 유저 프로그램이 직접 제공한 status 값을 exit 하는 프로세스/스레드의 exit_status 값으로 저장 */
     thread_current()->exit_status = status;
@@ -283,7 +286,7 @@ int exec(const char *cmd_line) {
 
     /* Process Exec을 불러서 실패시 에러 반환 */
     if (process_exec(cmd_line_copy) == -1) {
-        exit(-1);
+        return -1;
     }
 
     /* Debug ; 성공시 다음 값이 출력되면 안됨 */
@@ -355,11 +358,13 @@ int open(const char *file) {
     }
 
     /* 파일을 열어보려고 시도하고, 실패시 -1 반환 (struct file 필수) */
+    sema_down(&filesys_sema);
     struct file *opened_file;
     opened_file = filesys_open(file); // *file의 주소 file
     if (!opened_file) {
         return -1;
     }
+    sema_up(&filesys_sema);
 
     /* 만일 파일이 실행중이라면 수정 금지 */
     if (strcmp(thread_current()->name, file) == 0) {
@@ -429,6 +434,8 @@ int read(int fd, void *buffer, unsigned size) {
     if (!file) {
         return -1; // exit(-1)을 하려다가, 공식 문서에 적힌대로 우선 -1로 바꾼 상태
     }
+
+    /* 전부 확인되었으니 읽어서 읽은 바이트 값 반환 */
     read_count = file_read(file, buffer, size); // file_read는 size를 (off_t*) 형태로 바라는 것 같은데, 에러가 떠서 일단 일반 사이즈로 넣음
 
     return read_count;
@@ -468,8 +475,6 @@ int write(int fd, const void *buffer, unsigned size) {
     } // 만일 deny_write라면 실패 반환 (임시, sync_write 등에서 수정 필요할 가능성 높음)
 
     int bytes_written = file_write(file_to_write, buffer, size);
-
-    // sema_up(&filesys_sema);
 
     return bytes_written;
 }
@@ -513,26 +518,88 @@ void close(int fd) {
 
 void *mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
 
-    /* STDIN STDOUT이면 예외처리 */
+    /* (1~2) fd값이 STDIN STDOUT이면 예외처리 */
     if (fd == 0 || fd == 1) {
         return NULL;
     }
 
-    /* do_mmap에 필요한 Parameter들 추출 */
-    struct file *f = get_file_from_fd(fd);
-    off_t file_len = file_length(f);
-    length = length > file_len ? file_len : length;
-    void *va = NULL;
-
-    if (f) {
-        va = do_mmap(addr, length, writable, f, offset);
+    /* (3~4) addr이 커널이거나, 사이즈가 딱 4KB 단위로 전달된게 아니라면 예외처리 */
+    if (addr == NULL || is_kernel_vaddr(addr) || (uint64_t)addr % PGSIZE != 0) {
+        return NULL;
     }
 
+    /* 주어진 fd를 기반으로 매핑할 파일을 추출 */
+    struct thread *curr = thread_current();
+    struct file *file_to_map = get_file_from_fd(fd);
+
+    /* 반환할 va를 우선 NULL로 초기화*/
+    void *va = NULL;
+
+    /* 파일을 찾았다면 mmap 실행 */
+    if (file_to_map) {
+        lock_acquire(&curr->mmap_lock);
+        va = do_mmap(addr, length, writable, file_to_map, offset);
+        lock_release(&curr->mmap_lock);
+    }
+
+    /* mmap 시스템콜은 성공시 파일 시작 주소 va를, 실패시 NULL을 반환 */
     return va;
 }
 
 void munmap(void *addr) {
-    addr = pg_round_down(addr);
+
+    /* mmap과 비슷하게 주소값을 먼저 검증 */
+    if (addr == NULL || is_kernel_vaddr(addr) || (uint64_t)addr % PGSIZE != 0) {
+        return NULL;
+    }
+
+    /* SPT를 찾아보고, 소유한 페이지가 아니라면 실패 */
+    struct thread *curr = thread_current();
+    struct page *page_to_munmap = spt_find_page(&curr->spt, addr);
+    if (page_to_munmap == NULL) {
+        exit(-1);
+    }
+
+    /* 페이지가 맞다면 unmap을 위한 준비 */
+    if (page_to_munmap->frame == NULL) {
+
+        /* frame에 없다면, munmap될 페이지는 mmap으로 uninit상태로 생성된 페이지여야 함 */
+        if (page_to_munmap->uninit.type == VM_FILE) {
+
+            /* 생성 당시 사용된 aux값을 접속 */
+            struct lazy_load_aux *aux = (struct lazy_load_aux *)page_to_munmap->uninit.aux;
+
+            /* unmap 하려는 주소가 mmap 당시 첫 페이지인지 검증 */
+            if ((uint64_t)addr != (uint64_t)aux->first_page_va) {
+                exit(-1);
+            }
+
+            /* 첫 페이지가 맞다면, 해당 값이 현재 페이지의 va와 동일한지 한번 더 검증  */
+            if ((uint64_t)aux->first_page_va != (uint64_t)page_to_munmap->va) {
+                exit(-1);
+            }
+        } else { /* VM_FILE로 생성된 페이지가 아니니까 */
+            exit(-1);
+        }
+    } else { /* 이미 로딩되어 Frame에 있는 상황 */
+        if (page_get_type(page_to_munmap) == VM_FILE) {
+
+            /* 위와 마찬가지로, 언매핑 하려던 주소가 기록된 mmap 기준 첫 주소와 동일한지 확인 */
+            if ((uint64_t)addr != (uint64_t)page_to_munmap->file.first_page_va) {
+                exit(-1);
+            }
+
+            /* 동일하다면, 다시한번 그 값이 현재 언맵하려는 페이지의 va와 같은지 검증 */
+            if ((uint64_t)page_to_munmap->file.first_page_va != (uint64_t)page_to_munmap->va) {
+                exit(-1);
+            }
+
+        } else { /* 프레임에는 있으나 VM_FILE이 아니니까 */
+            exit(-1);
+        }
+    }
+
+    /* 여기까지 검증되었으면 됐으니 이제 해당 페이지를 시작으로 unmap 진행 ; 미완성 */
     do_munmap(addr);
 }
 

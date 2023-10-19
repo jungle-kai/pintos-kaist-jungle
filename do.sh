@@ -290,5 +290,4 @@ make clean
 make
 cd build
 source ../../activate
-$ARGS_NONE_GDB
-# $PAGE_SHUFFLE
+$MMAP_READ_GDB
