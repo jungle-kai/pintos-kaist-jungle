@@ -312,46 +312,32 @@ void process_exit(void) {
     struct thread *curr = thread_current();
     struct file **table = curr->fd_table;
 
-    /* Debug */
-    if (!curr->parent_is) {
-        printf("%s\n", curr->name);
-    }
+    // /* Debug */
+    // if (!curr->parent_is) {
+    //     printf("%s\n", curr->name);
+    // }
 
     /* 열린 파일 전부 닫기*/
     fd_table_close();
-    // int cnt = 2;
-    // while (cnt < 256) {
-    //     if (table[cnt]) {
-    //         file_close(table[cnt]);
-    //         table[cnt] = NULL;
-    //     }
-    //     cnt++;
-    // }
+
+    // mmap된 페이지들을 순회하면서 dirty
 
     /* 부모의 wait() 대기 ; 부모가 wait을 해줘야 죽을 수 있음 (한계) */
-    if (curr->parent_is) {
-        sema_up(&curr->wait_sema);
-        sema_down(&curr->free_sema);
-
-        // // 프로그램의 시작지점 프로세스면 파일 종료
-        // if (!strcmp(curr->parent_is->name, "main")) {
-        //     file_close(curr->running_file);
-        // }
-    }
+    palloc_free_page(table);
     
     if (curr->running_file != NULL) {
         file_close(curr->running_file);
         curr->running_file = NULL;
     }
 
-    // // 부모가 종료될 때 file 종료
-    // else {
-    //     file_close(curr->running_file);
-    // }
+    process_cleanup();
+
+    if (curr->parent_is) {
+        sema_up(&curr->wait_sema);
+        sema_down(&curr->free_sema);
+    }
 
     /* 페이지 테이블 메모리 반환 및 pml4 리셋 */
-    palloc_free_page(table);
-    process_cleanup();
 }
 
 /* 현재 프로세스의 페이지 테이블 매핑을 초기화하고, 커널 페이지 테이블만 남기는 함수 */

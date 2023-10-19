@@ -16,7 +16,7 @@
 static bool file_backed_swap_in(struct page *page, void *kva);
 static bool file_backed_swap_out(struct page *page);
 static void file_backed_destroy(struct page *page);
-static bool mmap_load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable);
+static bool mmap_load_segment(struct file *file, long ofs, uint8_t *upage, long read_bytes, uint32_t zero_bytes, bool writable);
 bool check_munmap_va(void* addr);
 /* DO NOT MODIFY this struct */
 static const struct page_operations file_ops = {
@@ -88,26 +88,29 @@ static void file_backed_destroy(struct page *page) {
     /* @@@@@@@@@@ TODO @@@@@@@@@@ */
 
     struct file_page *file_page UNUSED = &page->file;
-    // struct thread* t = thread_current();
+    struct thread* t = thread_current();
     
-    // // write된거면
-    // if (pml4_is_dirty(t->pml4, page.va)) {
-    //     // 지울 때 쓰기
-    //     /*
-    //             size_t read_bytes;
+    // write된거면
+    if (pml4_is_dirty(t->pml4, page->va)) {
+        // 지울 때 쓰기
+        file_write_at(page->file.file, page->va, page->file.read_bytes, page->file.offset);
+        
+        // memcpy()
+        /*
+                // size_t read_bytes;
     //             size_t zero_bytes;
     //             off_t offset;
     //     */
-    //    // write 정보
+       // write 정보
 
 
-    // }
+    }
 }
 
 /* Do the mmap */
 /* mmap 함수 구현 */
 /* fd로 열린 file을 offset부터 length만큼 읽어서 addr에 lazy하게 매핑하겠다. */
-void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t offset) {
+void *do_mmap(void *addr, long length, int writable, struct file *file, long offset) {
 
     /* 파일을 메모리에 매핑하는 함수. 유저의 VA, 바이트 크기, Write 가능여부, 파일 포인터, 그리고 Offset을 활용. */
 
@@ -131,6 +134,10 @@ void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t 
     uint64_t temp_addr = (uint64_t)addr; // page_aligned 만족
     uint32_t pages_size = (uint32_t)ROUND_UP(length, PGSIZE);
 
+    if (length == 0) {
+        pages_size += PGSIZE;
+    }
+
     // 끝 페이지가 kernel 영역 침범하는지 확인
     if (temp_addr + length > KERN_BASE) {
         return NULL;
@@ -144,6 +151,7 @@ void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t 
         }
     }
 
+    // printf("주소: %p, 길이: %d\n", addr, length);
     // file, offset, va, read_bytes, zero_bytes
     if (!mmap_load_segment(file, offset, addr, length, pages_size - length, writable)) {
         return NULL;
@@ -206,7 +214,7 @@ void do_munmap(void *addr) {
 
     struct page* origin_page = spt_find_page(spt, addr);
 
-    uint64_t temp_addr = (uint64_t)addr + PGSIZE;
+    char* temp_addr = (char*)addr;
     struct page* temp_page;
     struct file_info* temp_file_info;
     struct file* origin_file;
@@ -227,7 +235,7 @@ void do_munmap(void *addr) {
            break;
         }
 
-        temp_page = spt_find_page(spt, temp_addr);
+        temp_page = spt_find_page(spt, (void*)temp_addr);
 
         // 없으면 끝
         if (temp_page == NULL) {
@@ -393,11 +401,12 @@ bool check_munmap_va(void* addr) {
     return true;
 }
 
-static bool mmap_load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable) {
+static bool mmap_load_segment(struct file *file, long ofs, uint8_t *upage, long read_bytes, uint32_t zero_bytes, bool writable) {
     ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
     ASSERT(pg_ofs(upage) == 0);
     ASSERT(ofs % PGSIZE == 0);
-    // printf("upage: %p\n", upage);
+ 
+    // printf("주소: %p, read_bytes: %d, zero_bytes: %d\n", upage, read_bytes, zero_bytes);
     while (read_bytes > 0 || zero_bytes > 0) {
         size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
         size_t page_zero_bytes = PGSIZE - page_read_bytes;

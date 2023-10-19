@@ -290,4 +290,4 @@ make clean
 make
 cd build
 source ../../activate
-$MMAP_UNMAP
+$MMAP_INHERIT

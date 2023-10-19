@@ -8,6 +8,7 @@
 #include "vm/inspect.h"
 #include "threads/pte.h"
 #include <hash.h> // SPT 해시테이블을 위해서 추가
+#include "threads/mmu.h"
 
 struct list frame_list;
 struct lock page_table_lock;
@@ -271,7 +272,7 @@ static bool vm_handle_wp(struct page *page UNUSED) {
 
 /* Return true on success */
 bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
-
+    // printf("페이지폴트 주소: %p\n", addr);
     /* Page Fault 발생 시 처음 Invoke 되는 함수.
        Fault 발생 사유에 따라서 어떤 조치가 필요한지 확인하고, 해당 액션을 통해서 페이지를 확보해오는 함수. */
     /* @@@@@@@@@@ TODO: Validate the fault @@@@@@@@@@ */
@@ -283,7 +284,7 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
     // stack 생각, stack overflow 생각, stack이랑 멀리 떨어졌을 경우, code segment 접근 경우
     
     // 유저모드인데 접근하면 안되는 주소에 접근한 경우
-    if (user && (addr > USER_STACK || is_kernel_vaddr(addr))) {
+    if (user && is_kernel_vaddr(addr)) {
         return false;
     }
     
@@ -295,8 +296,9 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
     // printf("fault address: %p\n rounded: %p\n", addr, rounded_addr);
     // spt에 등록조차 되지 않은 경우
     if (page == NULL) {
+        // printf("아직도 여기로 옴?\n");
         // 스택 크기를 늘려야 하는 경우(addr과 rsp 비교)
-        if (pg_round_up(addr) >= f->rsp) { // 내일 up한거 돌려라
+        if ((uint64_t)addr < USER_STACK && pg_round_up(addr) >= f->rsp) { // 내일 up한거 돌려라
             return vm_claim_page(addr);
         }
 
@@ -304,14 +306,30 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
         return false;
     }
 
-    // 그 외의 경우.
-    return vm_do_claim_page(page);
-
+    // 그 외의 경우. 일단 파일여부 저장
+    bool is_file = page->uninit.type == VM_FILE ? 1 : 0;
     
+    if (is_file) {
+        struct file_info* f_info = (struct file_info*)page->uninit.aux; 
+        if (f_info->init_mapped_va == addr && f_info->page_read_bytes == 0) {
+            return false;
+        }
+    }
 
+    bool res = vm_do_claim_page(page);
+    
+    // 파일타입에 쓰기 연산하려고 했으면
+    if (is_file) {
+        if (page->writable && write) {
+            pml4_set_dirty(t->pml4, rounded_addr, true);        
+        }
 
-    
-    
+        else if (!page->writable && write) {
+            return false;
+        }
+    }
+
+    return res;
 
     // page NULL 체크
     /* 3. page를 가지고 uninit_initialize() 함수 호출.
@@ -457,6 +475,8 @@ static bool vm_do_claim_page(struct page *page) {
         palloc_free_page(frame->kva);
         return false;
     }
+
+    // install_page 한 이후에 dirty bit 체크해야 함
     
     bool res = swap_in(page, frame->kva);
     return res;
@@ -498,40 +518,49 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED, st
 
         // frame이 NULL이 아닐 때, 부모쪽 프레임과 연결된 물리메모리 데이터를 자식에도 할당해서 복사해줌
         if (parent_page->frame != NULL) {
-            // 새 page 초기화
-            uninit_new(new_page, parent_page->va, parent_page->uninit.init, parent_page->uninit.type, NULL, parent_page->uninit.page_initializer);
-            new_page->writable = parent_page->writable;
+            if (page_get_type(parent_page) != VM_FILE) {
+                // 새 page 초기화
+                uninit_new(new_page, parent_page->va, parent_page->uninit.init, parent_page->uninit.type, NULL, parent_page->uninit.page_initializer);
+                new_page->writable = parent_page->writable;
 
-            // 일단 frame 얻기
-            struct frame* new_frame = vm_get_frame();
+                // 일단 frame 얻기
+                struct frame* new_frame = vm_get_frame();
 
-            if (new_frame == NULL) {
-                return false;
+                if (new_frame == NULL) {
+                    return false;
+                }
+
+                // frame과 page 연결
+                new_page->frame = new_frame;
+                new_frame->page = new_page;
+
+                // 페이지 초기화
+                new_page->uninit.page_initializer(new_page, new_page->uninit.type, new_frame->kva);
+
+                // 부모의 frame으로부터 kva 구한 후, kva에서 PGSIZE만큼 복사
+                memcpy(new_frame->kva, parent_page->frame->kva, PGSIZE);
+
+                // 페이지 테이블에 등록
+                // install_page에 writable을 넣어주어야 함
+                // page 구조체에 쓰기여부 넣기?
+                // pml4e_walk로 구할 수 있나?
+                // page 구조체 만들 때 넣어주기.
+                install_page(new_page->va, new_frame->kva, new_page->writable);
+                // // vm_do_claim_page(): page를 넣으면, frame을 만들고 연결시키고 lazy_loading까지 해주는 함수.
+                // if (!vm_do_claim_page(new_page)) {
+                //     printf("spt cpy: 페이지-프레임 연결실패!\n");
+                //     return false;
+                // }  
+
+                // vm_do_claim_page()가 성공했으면 이후에 해줄거 없음.
+                if (!spt_insert_page(dst, new_page)) {
+                    printf("spt cpy: spt 새페이지 insert 실패!\n");
+                    return false;
+               }
             }
-
-            // frame과 page 연결
-            new_page->frame = new_frame;
-            new_frame->page = new_page;
-
-            // 페이지 초기화
-            new_page->uninit.page_initializer(new_page, new_page->uninit.type, new_frame->kva);
-
-            // 부모의 frame으로부터 kva 구한 후, kva에서 PGSIZE만큼 복사
-            memcpy(new_frame->kva, parent_page->frame->kva, PGSIZE);
-
-            // 페이지 테이블에 등록
-            // install_page에 writable을 넣어주어야 함
-            // page 구조체에 쓰기여부 넣기?
-            // pml4e_walk로 구할 수 있나?
-            // page 구조체 만들 때 넣어주기.
-            install_page(new_page->va, new_frame->kva, new_page->writable);
-            // // vm_do_claim_page(): page를 넣으면, frame을 만들고 연결시키고 lazy_loading까지 해주는 함수.
-            // if (!vm_do_claim_page(new_page)) {
-            //     printf("spt cpy: 페이지-프레임 연결실패!\n");
-            //     return false;
-            // }  
-
-            // vm_do_claim_page()가 성공했으면 이후에 해줄거 없음.
+            else {
+                continue;
+            }
         }
 
         // 아직 부모가 lazy_load_segment()를 호출하기 전일 때,
@@ -542,23 +571,32 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED, st
             // char* file_name = thread_current()->parent_is->name;
             // struct file* new_file = filesys_open(file_name);
             // 부모의 aux를 복제
-            struct file_info* f_info = (struct file_info*)malloc(sizeof(struct file_info));
-            struct file_info* parent_file_info = (struct file_info*)parent_page->uninit.aux;
-            memcpy(f_info, parent_file_info, sizeof(struct file_info));
+            if (parent_page->uninit.type != VM_FILE) {
+                struct file_info* f_info = (struct file_info*)malloc(sizeof(struct file_info));
+                struct file_info* parent_file_info = (struct file_info*)parent_page->uninit.aux;
+                memcpy(f_info, parent_file_info, sizeof(struct file_info));
 
-            // 새 page 초기화
-            uninit_new(new_page, parent_page->va, parent_page->uninit.init, parent_page->uninit.type, f_info, parent_page->uninit.page_initializer);
+                // 새 page 초기화
+                uninit_new(new_page, parent_page->va, parent_page->uninit.init, parent_page->uninit.type, f_info, parent_page->uninit.page_initializer);
 
-            new_page->writable = parent_page->writable;
+                new_page->writable = parent_page->writable;
 
-            // lazy_load_segment() 호출 전이라 install_page() 해주면 안됨.
+                // lazy_load_segment() 호출 전이라 install_page() 해주면 안됨.
+                 if (!spt_insert_page(dst, new_page)) {
+                    printf("spt cpy: spt 새페이지 insert 실패!\n");
+                    return false;
+                }
+            }
+            else {
+                continue;
+            }
         }
 
-        // 다 했으면 이제 dst에 새 page넣기
-        if (!spt_insert_page(dst, new_page)) {
-            printf("spt cpy: spt 새페이지 insert 실패!\n");
-            return false;
-        }
+        // // 다 했으면 이제 dst에 새 page넣기
+        // if (!spt_insert_page(dst, new_page)) {
+        //     printf("spt cpy: spt 새페이지 insert 실패!\n");
+        //     return false;
+        // }
     }
 
     // printf("sptcpy: 성공!\n");
@@ -576,6 +614,7 @@ void supplemental_page_table_kill(struct supplemental_page_table *spt UNUSED) {
 
     /* SPT에 속한 페이지를 전부 삭제하고, 수정된 컨텐츠들을 디스크에 다시 저장하는 함수. */
     /* @@@@@@@@@@ TODO: Destroy all the SPT held by the current thread and writeback all the modified contents to the storage @@@@@@@@@@ */
+    // 
     hash_destroy(&spt->hash, destory_page);
 }
 
