@@ -32,6 +32,7 @@ struct bitmap *swap_bitmap;
 /* Global Synchronization Primitives */
 struct lock page_table_lock;
 struct lock frame_table_lock;
+struct lock swap_table_lock;
 
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////////// Virtual Memory System Init ////////////////////////////
@@ -66,8 +67,11 @@ void vm_init(void) {
     list_init(frame_table.frame_table_list);
 
     /* Swap-table은 bitmap으로 */
+    lock_init(&swap_table_lock);
     swap_disk = disk_get(1, 1);                        // Swap Disk 번호 (1, 1)
     swap_bitmap = bitmap_create(disk_size(swap_disk)); // Sector 개수와 동일한 크기의 bitmap 생성
+
+    // printf("%d @@@@@@@@@@ \n", disk_size(swap_disk)); // 60480 sectors, 512 bytes each -> 7560 pages of 4096bytes each
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -226,13 +230,21 @@ static struct frame *vm_get_victim(void) {
 
 /* Evict one page and return the corresponding frame.
  * Return NULL on error.*/
+/* vm_get_victim()으로 선정한 페이지를 DRAM에서 쫒아내는 함수. */
 static struct frame *vm_evict_frame(void) {
 
-    /* vm_get_victim()으로 선정한 페이지를 DRAM에서 쫒아내는 함수. */
-
     struct frame *victim = vm_get_victim();
+    if (victim == NULL) {
+        return NULL;
+    }
 
-    swap_out(victim->page);
+    lock_acquire(&swap_table_lock);
+    if (!swap_out(victim->page)) {
+        lock_release(&swap_table_lock);
+        return NULL;
+    }
+    lock_release(&swap_table_lock);
+
     victim->page->frame = NULL;
     victim->page = NULL;
 
@@ -335,6 +347,7 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
         /* 임시조치 ; Page->Frame이 있다면 Page Fault가 발생하지 말았어야 하지 않을까? */
         PANIC("Already in the Frame");
         // FREE ALL RESOURCES (PROCESS EXIT)
+        // thread_sleep(100);
     }
 
     /* Locate the page that faulted in the supplemental page table.
@@ -411,7 +424,9 @@ static bool vm_do_claim_page(struct page *page) {
     }
 
     /* 페이지 삽입 */
+    lock_acquire(&swap_table_lock);
     bool result = swap_in(page, frame->kva);
+    lock_release(&swap_table_lock);
     return result;
 }
 

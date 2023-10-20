@@ -60,23 +60,50 @@ bool file_backed_initializer(struct page *page, enum vm_type type, void *kva) {
 }
 
 /* Swap in the page by read contents from the file. */
+/* 파일에서 데이터를 읽어온 뒤 해당 해당 페이지를 DRAM에 로딩하는 함수. */
 static bool file_backed_swap_in(struct page *page, void *kva) {
 
-    /* 파일에서 데이터를 읽어온 뒤 해당 해당 페이지를 DRAM에 로딩하는 함수. */
+    struct file_page *file_page = &page->file;
+    struct file *origin_file = file_page->origin_file;
+    off_t offset = file_page->offset;
+    uint32_t read_bytes = file_page->read_bytes;
+    uint32_t zero_bytes = file_page->zero_bytes;
 
-    /* @@@@@@@@@@ TODO @@@@@@@@@@ */
+    int bytes_read = file_read_at(origin_file, kva, read_bytes, offset);
+    if (bytes_read != read_bytes) {
+        return false;
+    }
 
-    struct file_page *file_page UNUSED = &page->file;
+    if (zero_bytes > 0) {
+        memset((uint8_t *)kva + read_bytes, 0, zero_bytes);
+    }
+
+    return true;
 }
 
 /* Swap out the page by writeback contents to the file. */
+/* DRAM에서 해당 페이지를 제거한 뒤 디스크에 변경사항을 저장하는 함수. */
 static bool file_backed_swap_out(struct page *page) {
 
-    /* DRAM에서 해당 페이지를 제거한 뒤 디스크에 변경사항을 저장하는 함수. */
+    ASSERT(page->frame != NULL);
 
-    /* @@@@@@@@@@ TODO @@@@@@@@@@ */
+    struct thread *curr = thread_current();
+    struct file_page *file_page = &page->file;
 
-    struct file_page *file_page UNUSED = &page->file;
+    struct file *origin_file = file_page->origin_file;
+    uint64_t temp_addr = (uint64_t)page->frame->kva;
+
+    if (pml4_is_dirty(curr->pml4, page->va)) {
+
+        /* 파일에다가 현재 버퍼 (va)의 내용을 덮어쓰기 (페이지 단위) */
+        off_t bytes_written = file_write_at(origin_file, (void *)temp_addr, page->file.read_bytes + page->file.zero_bytes, page->file.offset);
+        printf("@@@@@ %d bytes written @@@@@ %d address @@@@@ \n", bytes_written, (void *)page->va);
+    }
+    printf("@@@@@ %d address @@@@@ \n", (void *)page->va);
+
+    pml4_clear_page(curr->pml4, page->va);
+
+    return true;
 }
 
 /* Destory the file backed page. PAGE will be freed by the caller. */

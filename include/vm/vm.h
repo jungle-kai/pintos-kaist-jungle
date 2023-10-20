@@ -118,6 +118,7 @@ extern struct disk *swap_disk;
 extern struct bitmap *swap_bitmap;
 extern struct lock page_table_lock;
 extern struct lock frame_table_lock;
+extern struct lock swap_table_lock;
 
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////////////// 직접 추가한 데이터 구조체 끝 /////////////////////////////

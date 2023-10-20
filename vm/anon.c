@@ -51,7 +51,9 @@ static bool anon_swap_in(struct page *page, void *kva) {
     }
 
     /* Disk에서 불러와서 frame->kva에 저장하고, page 값도 업데이트 */
-    disk_read(swap_disk, (disk_sector_t)anon_page->swap_disk_sector_start, kva);
+    for (int i = 0; i < 8; i++) {
+        disk_read(swap_disk, (disk_sector_t)(anon_page->swap_disk_sector_start + i), (char *)kva + (i * DISK_SECTOR_SIZE));
+    }
     // page->frame->page = page; // swap_in을 부르기 전에 "page = frame"을 이미 했음
 
     /* 해당 swap_disk_sector_start를 false로 돌리기 (해당 위치에 데이터가 없다고 표기) */
@@ -64,6 +66,9 @@ static bool anon_swap_in(struct page *page, void *kva) {
 /* Swapdisk에 페이지를 넣는 함수 */
 static bool anon_swap_out(struct page *page) {
 
+    ASSERT(page->frame != NULL);
+
+    struct thread *curr = thread_current();
     struct anon_page *anon_page = &page->anon;
 
     /* swap_out은 디스크에 저장하는 과정으로, 먼저 bitmap으로 빈곳을 조회 ; 시작위치를 idx로 반환받아 저장 */
@@ -73,8 +78,11 @@ static bool anon_swap_out(struct page *page) {
     }
 
     /* 해당 위치에 디스크 저장 및 anon_page->swap_disk_sector_start 업데이트 */
-    disk_write(swap_disk, (disk_sector_t)idx, (void *)page->frame->kva);
+    for (int i = 0; i < 8; i++) {
+        disk_write(swap_disk, (disk_sector_t)(idx + i), ((char *)(page->frame->kva + (i * DISK_SECTOR_SIZE)))); // ->page->va?
+    }
     anon_page->swap_disk_sector_start = idx;
+    pml4_clear_page(curr->pml4, page->va); // pml4에서 present-bit을 0으로 변경하여 다음 접속시 page fault 유도
 
     return true;
 }
