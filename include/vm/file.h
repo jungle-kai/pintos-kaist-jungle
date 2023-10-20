@@ -13,6 +13,7 @@ struct file_page {
     size_t zero_bytes;
     long offset;
     bool writable;
+    size_t page_cnts;
 };
 
 void vm_file_init (void);

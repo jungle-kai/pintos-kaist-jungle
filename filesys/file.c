@@ -11,6 +11,7 @@ struct file *file_open(struct inode *inode) {
     if (inode != NULL && file != NULL) {
         file->inode = inode;
         file->pos = 0;
+        file->file_backed_cnts = 0;
         file->deny_write = false;
         return file;
     } else {

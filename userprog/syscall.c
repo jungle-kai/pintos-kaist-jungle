@@ -36,7 +36,7 @@ int write(int fd, const void *buffer, unsigned size);
 void seek(int fd, unsigned position);
 unsigned tell(int fd);
 void close(int fd);
-void* mmap(void *addr, long length, int writable, int fd, long offset);
+void* mmap(void *addr, long long length, int writable, int fd, long offset);
 void munmap(void* addr);
 /* File Descriptor 관련 함수 Prototype & Global Variables */
 int allocate_fd(struct file *file);
@@ -628,59 +628,44 @@ static bool put_user(uint8_t *udst, uint8_t byte) {
     return error_code != -1;
 }
 
-void* mmap(void *addr, long length, int writable, int fd, long offset) {
-    // stdin, stdout 매핑 요구시 NULL 반환
+void* mmap(void *addr, long long length, int writable, int fd, long offset) {
     if (is_kernel_vaddr(addr)) {
-        // printf("여기로 옴?, 주소: %p, 길이: %ld\n", addr, length);
         return NULL;
     }
 
+    // stdin, stdout 매핑 요구시 NULL 반환
     if (fd == 0 || fd == 1) {
         return NULL;
     }
 
-    // 읽을 길이가 0 미만이거나 length < offset이면
-   if (length < 0 || length < offset) {
+    // 읽을 길이가 0이하면   
+   if (length <= 0) {
         return NULL;
    }
 
-
-   // 읽을 길이가 0이면 
-   
-    //    f_info->file = get_file_from_fd(fd);
-    //     f_info->writable = writable;
-    //     f_info->offset = offset;
-    //     f_info->init_mapped_va = addr;
-    //     f_info->page_read_bytes = 0;
-    //     f_info->page_zero_bytes = PGSIZE;
-        
-    // if (!vm_alloc_page_with_initializer(VM_FILE, upage, writable, lazy_load_segment, f_info)) {
-    //     return NULL;
-    // }
+    // offset이 pgsize 배수 아니면,
+   if (offset % PGSIZE != 0) {
+    return NULL;
+   }
 
     // 매핑될 시작 가상주소가 page_aligned 아니면 NULL
    if ((char)addr % PGSIZE != 0) {
         return NULL;
    }
 
-    struct file* origin_file = get_file_from_fd(fd);
-    struct thread* t = thread_current();
+    struct thread* t;
     void* va = NULL;
+    struct file* origin_file = get_file_from_fd(fd);
     if (origin_file) {
-        lock_acquire(&t->mmap_lock);
-        struct file* new_file = file_reopen(origin_file);
-        off_t file_len = file_length(new_file);
-        if (file_len != 0 && length == 0) {
-            file_close(new_file);
-            lock_release(&t->mmap_lock);
+        // 현재 파일크기보다 offset이 같거나 크면
+        if (file_length(origin_file) <= offset) {
             return NULL;
         }
-        else {
-            length = length > file_len ? file_len : length; 
+        t = thread_current();
 
-            va = do_mmap(addr, length, writable, new_file, offset);
-            lock_release(&t->mmap_lock);
-        }
+        lock_acquire(&t->mmap_lock);
+        va = do_mmap(addr, length, writable, origin_file, offset);
+        lock_release(&t->mmap_lock);
     }
 
     return va;

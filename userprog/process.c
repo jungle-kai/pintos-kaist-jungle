@@ -345,6 +345,7 @@ static void process_cleanup(void) {
     struct thread *curr = thread_current();
 
 #ifdef VM
+    // swap_table_kill(&curr->swap_pt);
     supplemental_page_table_kill(&curr->spt);
 #endif
 
@@ -782,20 +783,15 @@ static bool install_page(void *upage, void *kpage, bool writable) {
 }
 
 bool lazy_load_segment(struct page *page, void *aux) {
-    /* TODO: Load the segment from the file */
-
-    /* TODO: This called when the first page fault occurs on address VA. */
-
-    /* TODO: VA is available when calling this function. */
-
     uint8_t *kpage = page->frame->kva;
     struct file_info* f_info = (struct file_info*)aux;
+    struct thread* t = thread_current();
 
-    /* Load this page. */
     file_seek(f_info->file, f_info->offset);
     if (file_read(f_info->file, kpage, f_info->page_read_bytes) != (int)(f_info->page_read_bytes)) {
         // 파일 read 실패했을 때, load는 fail로 되면서 프로그램 끝남
-        destroy(page);
+        spt_remove_page(&t->spt, page);
+        // destroy(page);
         // palloc_free_page(kpage);
         return false;
     }

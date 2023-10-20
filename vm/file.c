@@ -9,6 +9,7 @@
 #include "lib/round.h"
 #include "threads/malloc.h"
 #include "threads/mmu.h"
+#include "lib/string.h"
 
 // #define VM
 // clang-format on
@@ -52,6 +53,7 @@ bool file_backed_initializer(struct page *page, enum vm_type type, void *kva) {
     page->file.zero_bytes = file_page_info->page_zero_bytes;
     page->file.writable = file_page_info->writable;
     page->file.init_mmaped_va = file_page_info->init_mapped_va;
+    page->file.page_cnts = file_page_info->page_cnts;
 
     return true;
 }
@@ -65,6 +67,9 @@ static bool file_backed_swap_in(struct page *page, void *kva) {
     /* @@@@@@@@@@ TODO @@@@@@@@@@ */
 
     struct file_page *file_page UNUSED = &page->file;
+    // lazyload하기
+    // vm_alloc_page_with_initializer()
+    // mmap_load_segment(file_page->file,file_page->offset, file_page.)
 }
 
 /* Swap out the page by writeback contents to the file. */
@@ -74,8 +79,29 @@ static bool file_backed_swap_out(struct page *page) {
     /* DRAM에서 해당 페이지를 제거한 뒤 디스크에 변경사항을 저장하는 함수. */
 
     /* @@@@@@@@@@ TODO @@@@@@@@@@ */
-
+    struct thread* t = thread_current();
     struct file_page *file_page UNUSED = &page->file;
+    // dirty 체크 후, 써져있으면 파일에 저장
+
+    // printf("")
+        // write된거면
+    if (pml4_is_dirty(t->pml4, page->va)) {
+        pml4_set_dirty(t->pml4, page->va, 0);
+        // 지울 때 쓰기
+        if (file_write_at(page->file.file, page->va, page->file.read_bytes, page->file.offset) != page->file.read_bytes) {
+            return false;
+        }
+    }
+
+    // 스왑 테이블에 페이지 구조체 넣기 -> file은 스왑테이블 안씀.
+
+    // 스왑 페이지 테이블
+    // 해당 물리메모리 영역 초기화
+    memset(page->frame->kva, 0, PGSIZE);
+
+    // 페이지테이블 연결 제거(이후, 다시 va에 접근시 page fault 발생 -> 해당 va와 연결된 page 구조체가 일단 스왑 테이블에 있나 확인 -> 없으면 기존로직 수행)
+    pml4_clear_page(t->pml4, page->va);
+    return true;
 }
 
 /* Destory the file backed page. PAGE will be freed by the caller. */
@@ -89,113 +115,81 @@ static void file_backed_destroy(struct page *page) {
 
     struct file_page *file_page UNUSED = &page->file;
     struct thread* t = thread_current();
+
+    // 파일 닫아줘야 함.
+    // page 들어오면, 부모페이지 찾아서 다 써주기 + va = NULL로 바꿔주기 + 파일 삭제
+    // 이후 클리어 
     
+    
+    // 
     // write된거면
     if (pml4_is_dirty(t->pml4, page->va)) {
         // 지울 때 쓰기
         file_write_at(page->file.file, page->va, page->file.read_bytes, page->file.offset);
-        
-        // memcpy()
-        /*
-                // size_t read_bytes;
-    //             size_t zero_bytes;
-    //             off_t offset;
-    //     */
-       // write 정보
-
-
     }
+
+    file_page->file->file_backed_cnts++;
+
+    if (page->file.page_cnts == file_page->file->file_backed_cnts) {
+        file_close(file_page->file);
+    }
+
+    pml4_clear_page(t->pml4, page->va);
+    palloc_free_page(page->frame->kva);
+    hash_delete(&thread_current()->spt, &page->spt_hash_elem);
+    free(page->frame);
 }
 
 /* Do the mmap */
 /* mmap 함수 구현 */
 /* fd로 열린 file을 offset부터 length만큼 읽어서 addr에 lazy하게 매핑하겠다. */
+
+    // if (origin_file) {
+    //     lock_acquire(&t->mmap_lock);
+    //     struct file* new_file = file_reopen(origin_file);
+    //     off_t file_len = file_length(new_file);
+    //     if (file_len != 0 && length == 0) {
+    //         file_close(new_file);
+    //         lock_release(&t->mmap_lock);
+    //         return NULL;
+    //     }
+    //     else {
+    //         va = do_mmap(addr, length, writable, new_file, offset);
+    //         lock_release(&t->mmap_lock);
+    //     }
+    // }
+
 void *do_mmap(void *addr, long length, int writable, struct file *file, long offset) {
-
-    /* 파일을 메모리에 매핑하는 함수. 유저의 VA, 바이트 크기, Write 가능여부, 파일 포인터, 그리고 Offset을 활용. */
-
-    /* @@@@@@@@@@ TODO @@@@@@@@@@ */
-    
-    // 가상 주소 addr부터, addr + length까지 매핑됨
-    // 매핑되는 값은 file의 offset지점부터 offset + length지점까지임
-    // open할 때 어떻게 하는지 보기
-
-    /*
-        length를 0부터 시작해서 PGSIZE를 더해가며 page initialize 수행
-    */
-
-    /******기존에 사용되던 변수****/
-    //struct file_info* f_info;
-    // size_t temp_len = length; // len > 0 만족
-    // size_t temp_offset = offset;
-    /*************************/
-
     struct thread* t = thread_current();
     uint64_t temp_addr = (uint64_t)addr; // page_aligned 만족
-    uint32_t pages_size = (uint32_t)ROUND_UP(length, PGSIZE);
 
-    if (length == 0) {
-        pages_size += PGSIZE;
-    }
+
+    // file 만듬
+    struct file* new_file = file_reopen(file);
+
+    length = ROUND_UP(length, PGSIZE); // length: 매핑영역 크기(페이지단위)
 
     // 끝 페이지가 kernel 영역 침범하는지 확인
     if (temp_addr + length > KERN_BASE) {
         return NULL;
     }
 
+
     // 일단 해당 파일을 연속된 가상페이지에 매핑할 수 있는지부터 확인
-    for (temp_addr; temp_addr < (uint64_t)addr + (uint64_t)pages_size; temp_addr += PGSIZE) {
+    for (temp_addr; temp_addr < (uint64_t)addr + length; temp_addr += PGSIZE) {
         // spt에 들어간게 없어야 함.
         if (spt_find_page(&t->spt, (void*)temp_addr)) {
             return NULL;
         }
     }
 
-    // printf("주소: %p, 길이: %d\n", addr, length);
+    off_t file_len = file_length(new_file);
+    long read_bytes = length < file_len ? length : file_len;
+
     // file, offset, va, read_bytes, zero_bytes
-    if (!mmap_load_segment(file, offset, addr, length, pages_size - length, writable)) {
+    if (!mmap_load_segment(new_file, offset, addr, read_bytes, length - read_bytes, writable)) {
         return NULL;
     }
-
-    return addr;
-
-    /*******기존 코드*******/
-    // 매핑할게 남아 있을 때,
-    // while (temp_len > 0) {
-    //     if (spt_find_page(&t->spt, temp_addr)) {
-    //         // 매핑 되어있을 때, 지금까지 만들었던 페이지 구조체 삭제 및 NULL 반환
-    //         for (char va = (char)addr; va < temp_addr; va += PGSIZE) {
-    //             struct page* page = spt_find_page(&t->spt, va);
-    //             spt_remove_page(&t->spt, page);
-    //         }
-    //         return NULL;
-    //     }
-
-    //     // 매핑 안 되어 있을 때,
-
-    //     f_info = (struct file_info*)calloc(1, sizeof(struct file_info));
-    //     f_info->file = file;
-    //     f_info->offset = temp_offset;
-
-    //     // PGSIZE보다 많이 남았을 때,
-    //     if (temp_len >= PGSIZE) {
-    //         f_info->page_read_bytes = PGSIZE;
-    //         f_info->page_zero_bytes = 0;
-    //         vm_alloc_page_with_initializer(VM_FILE, temp_addr, writable, lazy_load_segment, f_info);
-    //         temp_offset += PGSIZE;
-    //         temp_len -= PGSIZE;
-    //         temp_addr += PGSIZE;
-    //     }
-
-    //     // PGSIZE보다 적게 남았을 때,
-    //     else {
-    //         f_info->page_read_bytes = temp_len;
-    //         f_info->page_zero_bytes = PGSIZE - temp_len;
-    //         vm_alloc_page_with_initializer(VM_FILE, temp_addr, writable, lazy_load_segment, f_info);
-    //         break;
-    //     }
-    // }
-    /*******기존 코드*******/
 
     return addr;
 }
@@ -267,8 +261,6 @@ void do_munmap(void *addr) {
         // 다음 페이지 확인
         temp_addr += PGSIZE;
     }
-
-    free(origin_file);
 
     // spt_remove_page(spt, temp_page)를 하면,
         // spt에서 page 구조체 빼버림
@@ -406,6 +398,8 @@ static bool mmap_load_segment(struct file *file, long ofs, uint8_t *upage, long 
     ASSERT(pg_ofs(upage) == 0);
     ASSERT(ofs % PGSIZE == 0);
  
+    uint8_t* init_addr = upage;
+    uint32_t pagesize = read_bytes + zero_bytes;
     // printf("주소: %p, read_bytes: %d, zero_bytes: %d\n", upage, read_bytes, zero_bytes);
     while (read_bytes > 0 || zero_bytes > 0) {
         size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
@@ -415,10 +409,10 @@ static bool mmap_load_segment(struct file *file, long ofs, uint8_t *upage, long 
         f_info->file = file;
         f_info->writable = writable;
         f_info->offset = ofs;
-        f_info->init_mapped_va = upage;
+        f_info->init_mapped_va = (void*)init_addr;
         f_info->page_read_bytes = page_read_bytes;
         f_info->page_zero_bytes = page_zero_bytes;
-        
+        f_info->page_cnts = pagesize / PGSIZE;
         if (!vm_alloc_page_with_initializer(VM_FILE, upage, writable, lazy_load_segment, f_info))
             return false;
 

@@ -9,8 +9,11 @@
 #include "threads/pte.h"
 #include <hash.h> // SPT 해시테이블을 위해서 추가
 #include "threads/mmu.h"
+#include "vm/anon.h"
+#include "vm/file.h"
+#include "vm/uninit.h"
 
-struct list frame_list;
+struct list frame_table;
 struct lock page_table_lock;
 // #define VM
 // clang-format on
@@ -23,8 +26,8 @@ void vm_init(void) {
     vm_anon_init();
     vm_file_init();
     lock_init(&page_table_lock);
-    list_init(&frame_list);
-
+    list_init(&frame_table);
+    // hash_init(&swap_table);
 #ifdef EFILESYS /* For project 4 */
     pagecache_init();
 #endif
@@ -195,7 +198,9 @@ static struct frame *vm_get_victim(void) {
     struct frame *victim = NULL;
 
     /* @@@@@@@@@@ TODO: The policy for eviction is up to you. @@@@@@@@@@*/
-
+    struct list_elem* frame_elem = list_pop_front(&frame_table);
+    victim = list_entry(frame_elem, struct frame, frame_elem);
+    victim->page = NULL;
     return victim;
 }
 
@@ -211,7 +216,22 @@ static struct frame *vm_evict_frame(void) {
 
     /* @@@@@@@@@@ TODO: swap out the victim and return the evicted frame. @@@@@@@@@@ */
     /* victim frame을 swap out하고 리턴한다. */
-    return NULL;
+    // victim frame들은 모두 로딩된 상태임. 왜? 지금 evict가 필요한데, evict는 물리메모리가 없어서 하는거고, 물리메모리 할당된 녀석들 중에서 골라서 victim 하나 뽑는거기 때문에
+    // vm_get_victim() 해서 얻은 victim frame을 그냥 반환해도 되는가?
+        // frame의 필드: kva, page, frame_elem.
+        // 물리메모리를 양보한다는 것: 물리메모리에 적힌 데이터를 다 처리하고 그냥 다시 frame 넘겨주는 것. 넘겨줄 때, 다 0으로 초기화하고 보내줌.
+    // if (page_get_type(victim->page) == VM_ANON) {
+    //     // 여기서 swap-out 호출? -> 
+    //     swap_out(victim->page);
+    // }
+    // else if (page_get_type(victim->page) == VM_FILE) {
+
+    // }
+    if (!swap_out(victim->page)) {
+        PANIC("file didn't swapped out!");
+    }
+
+    return victim;
 }
 
 /* palloc() and get frame. If there is no available page, evict the page
@@ -237,13 +257,13 @@ static struct frame *vm_get_frame(void) {
     frame->kva = palloc_get_page(PAL_USER | PAL_ZERO);
 
     // 페이지 할당 실패 -> evict policy 결과로 얻은 frame 반환
-    ASSERT(frame->kva != NULL);
+    // ASSERT(frame->kva != NULL);
     if (frame->kva == NULL) {
         free(frame);
-        frame = vm_evict_frame(); // vm_evict_frame() 반환되는 frame은 kva에 이미 물리페이지 주소가 들어있는가?
+        frame = vm_evict_frame(); // vm_evict_frame() 반환되는 frame은 kva에 이미 물리페이지 주소가 들어있는가? -> 있어야지
     }
 
-    // list_push_back(&frame_list, &frame->frame_elem);
+    // 여기까지 나오면 이제 frame에 kva까지 연결된 상태임 -> frame table에 추가
 
     ASSERT(frame != NULL);
     ASSERT(frame->page == NULL);
@@ -285,6 +305,10 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
     
     // 유저모드인데 접근하면 안되는 주소에 접근한 경우
     if (user && is_kernel_vaddr(addr)) {
+        return false;
+    }
+
+    if (user && write && !not_present) {
         return false;
     }
     
@@ -463,6 +487,7 @@ static bool vm_do_claim_page(struct page *page) {
     if (frame == NULL) {
         return 0;
     }
+    list_push_back(&frame_table, &frame->frame_elem);
 
     /* Set links */
     frame->page = page;
@@ -635,4 +660,39 @@ unsigned
 page_hash (const struct hash_elem *p_, void *aux UNUSED) {
   const struct page *p = hash_entry (p_, struct page, spt_hash_elem);
   return hash_bytes (&p->va, sizeof p->va);
+}
+
+void swap_table_init(struct swap_table *swapt) {
+    // 뭘 기준으로 swap 테이블 정렬 및 찾기? 일단, swap_hash_elem이 페이지에 존재.
+    // swap_hash_elem으로 페이지 찾은 후, 페이지의 주소값 기준으로 찾기 -> page_hash, page_less 그대로 사용
+    // hash_init(&swapt->hash, page_hash, page_less, NULL);
+}
+
+// 그냥 스왑 해시테이블에서만 없애주고, 이후 supplemental_page_table_kill() 할 때,  
+// 각 타입별 destroy 함수 호출되는데, 이때 anon인 경우 모든 자원을 하므로, destructor 함수 부분에 NULL을 넣으면 hash 초기화만 된다. 
+// 아니다. swap table을 kill하는 경우, anon이 저장되어 있으면 스왑디스크에서 제거해야 하고,
+// file이 저장되어 있으면, file에 써야 한다.
+// 어차피 스왑용 destroy 함수 따로 만들어야 함.
+
+void destroy_swapped_page (struct hash_elem *e, void *aux) {
+    // struct page* page = hash_entry(e, struct page, swap_hash_elem);
+
+    // page의 타입을 판단해서, anon인 경우 swap table에서 제거하기만 하고,
+    // file인 경우, write된거면 쓴 후 swap table에서 제거.
+    // 근데 swap table에서 제거되는건 어차피 hash_destroy()할 때 자동으로 내부 코드 돌아가서 해결. 
+    // 그래서 그냥 destroy_swapped_page 대신 NULL 넣어주면 알아서 hash_table은 비워주고, supple_kill에서 페이지별 destroy 함수 호출해서 알아서 처리?
+    // -> NO!! 스왑된 anon 페이지 데이터는 스왑 디스크에 존재. 따라서 kill시 스왑디스크에서 제거하는 로직 수행해야 함.
+    // -> file 페이지 데이터는 기존 destroy 하던대로 하면 됨
+    
+    // 타입별로 나눠서 처리
+
+    // ANON인 경우
+    // if (page_get_type(page) == VM_ANON) {
+        // page->anon_page 내 정보들 가지고 swap disk 저장된 곳 파악해서 처리
+            // 처리: swap_hash_elem 없애주는 것(hash_destroy가 수행) + 스왑 디스크 비워주기(이거 코드 짜기, page->anon_page 내 정보들)
+    // }
+}
+
+void swap_table_kill(struct swap_table *swap_pt) {
+    // hash_destroy(&swap_pt->hash, destroy_swapped_page);
 }

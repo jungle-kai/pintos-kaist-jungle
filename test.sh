@@ -104,7 +104,7 @@ MMAP_BAD_OFF_GDB="pintos -v -k -m 20 --gdb   --fs-disk=10 -p tests/vm/mmap-bad-o
 MMAP_KERNEL_GDB="pintos -v -k -m 20 --gdb   --fs-disk=10 -p tests/vm/mmap-kernel:mmap-kernel -p ../../tests/vm/sample.txt:sample.txt --swap-disk=4 -- -q   -f run mmap-kernel"
 LAZY_FILE_GDB="pintos -v -k -m 20 --gdb   --fs-disk=10 -p tests/vm/lazy-file:lazy-file -p ../../tests/vm/sample.txt:sample.txt -p ../../tests/vm/small.txt:small.txt --swap-disk=4 -- -q   -f run lazy-file"
 LAZY_ANON_GDB="pintos -v -k -m 20 --gdb   --fs-disk=10 -p tests/vm/lazy-anon:lazy-anon --swap-disk=4 -- -q   -f run lazy-anon"
-SWAP_FILE_GDB="pintos -v -k -T 180 -m 8   --fs-disk=10 -p tests/vm/swap-file:swap-file -p ../../tests/vm/large.txt:large.txt --swap-disk=10 -- -q   -f run swap-file"
+SWAP_FILE_GDB="pintos -v -k -T 180 -m 8 --gdb  --fs-disk=10 -p tests/vm/swap-file:swap-file -p ../../tests/vm/large.txt:large.txt --swap-disk=10 -- -q   -f run swap-file"
 SWAP_ANON_GDB="pintos -v -k -T 180 -m 10 --gdb   --fs-disk=10 -p tests/vm/swap-anon:swap-anon --swap-disk=30 -- -q   -f run swap-anon"
 SWAP_ITER_GDB="pintos -v -k -T 180 -m 10 --gdb   --fs-disk=10 -p tests/vm/swap-iter:swap-iter -p ../../tests/vm/large.txt:large.txt --swap-disk=50 -- -q   -f run swap-iter"
 SWAP_FORK_GDB="pintos -v -k -m 40 --gdb   --fs-disk=10 -p tests/vm/swap-fork:swap-fork -p tests/vm/child-swap:child-swap --swap-disk=200 -- -q   -f run swap-fork"
@@ -290,4 +290,4 @@ make clean
 make
 cd build
 source ../../activate
-$MMAP_INHERIT
+$MMAP_READ

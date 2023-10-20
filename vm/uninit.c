@@ -12,6 +12,7 @@
 #include "vm/vm.h"
 #include "vm/uninit.h"
 #include <hash.h> // SPT 해시테이블을 위해서 추가
+#include "userprog/process.h"
 
 // #define VM
 // clang-format on
@@ -89,5 +90,14 @@ static void uninit_destroy(struct page *page) {
     /* @@@@@@@@@@ TODO: Fill this function. If you don't have anything to do, just return. @@@@@@@@@@ */
     
     // aux값 프리
+    hash_delete(&thread_current()->spt, &page->spt_hash_elem);
+    if (page->uninit.type == VM_FILE) {
+      struct file_info* f = (struct file_info*)(page->uninit.aux);
+      f->file->file_backed_cnts++;
+      
+      if (f->file->file_backed_cnts == f->page_cnts) {
+        file_close(f->file);
+      }
+    }
     free(page->uninit.aux);
 }

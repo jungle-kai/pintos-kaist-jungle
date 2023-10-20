@@ -4,6 +4,7 @@
 #include "vm/vm.h"
 #include "devices/disk.h"
 #include <hash.h> // SPT 해시테이블을 위해서 추가
+#include "threads/mmu.h"
 
 // #define VM
 // clang-format on
@@ -28,7 +29,9 @@ void vm_anon_init(void) {
     /* Anonymous Page의 데이터를 채워주는 초기화 함수 ; vm_init()에서 호출됨 */
 
     /* TODO: Set up the swap_disk. @@@@@@@@@@ */
-    swap_disk = NULL;
+    swap_disk = disk_get(1, 1);
+    // 비트맵 써야돼? 로도돼
+    // printf("디스크 크기: %d", disk_size(swap_disk));
 }
 
 /* Initialize the file mapping */
@@ -49,5 +52,9 @@ static bool anon_swap_out(struct page *page) { struct anon_page *anon_page = &pa
 /* Destroy the anonymous page. PAGE will be freed by the caller. */
 static void anon_destroy(struct page *page) {
     struct anon_page *anon_page = &page->anon;
+    palloc_free_page(page->frame->kva);
+    pml4_clear_page(thread_current()->pml4, page->va);
+    hash_delete(&thread_current()->spt, &page->spt_hash_elem);
     free(page->frame);
 }
+// 
