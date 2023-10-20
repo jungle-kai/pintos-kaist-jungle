@@ -87,7 +87,9 @@ void syscall_handler(struct intr_frame *f) {
     // 커널-사이드에서 실행된 결과물을 %rax에 넣어서 반환해야 함
 
     int syscall_num = f->R.rax;
-
+    // if (syscall_num != SYS_EXIT) {
+    //     sema_down(&filesys_sema);
+    // }
     switch (syscall_num) {
 
     case SYS_HALT:
@@ -160,6 +162,10 @@ void syscall_handler(struct intr_frame *f) {
         printf("Unknown system call: %d\n", syscall_num); // deprecated by placeholder, but kept in place
         thread_exit();
     }
+
+    // if (syscall_num != SYS_EXIT) {
+    //     sema_up(&filesys_sema);
+    // }
 
     return;
 }
@@ -355,13 +361,12 @@ int open(const char *file) {
     }
     /* 파일을 열어보려고 시도하고, 실패시 -1 반환 (struct file 필수) */
     struct file *opened_file;
-    sema_down(&filesys_sema);
+    // sema_down(&filesys_sema);
     opened_file = filesys_open(file); // *file의 주소 file
     // printf("file length: %d", file_length(opened_file)); // 794
     if (!opened_file) {
         return -1;
     }
-    sema_up(&filesys_sema);
 
     /* 만일 파일이 실행중이라면 수정 금지 */
     if (strcmp(thread_current()->name, file) == 0) {
@@ -379,6 +384,7 @@ int open(const char *file) {
 
     
     /* 여기까지 왔으면 성공했으니 fd값 반환 */
+    // sema_up(&filesys_sema);
     return fd;
 }
 
@@ -412,6 +418,7 @@ int read(int fd, void *buffer, unsigned size) {
     /* 읽어온 바이트 수를 기록할 변수 초기화 */
     int read_count = 0;
 
+    // sema_down(&filesys_sema);
     /* fd = 0의 케이스 처리 ; input_getc()는 글자를 하나씩 읽어서 리턴하는 함수 (input.c) */
     if (fd == 0) {
         for (unsigned int i = 0; i < size; i++) {
@@ -434,7 +441,7 @@ int read(int fd, void *buffer, unsigned size) {
         exit(-1);
     }
     read_count = file_read(file, buffer, size); // file_read는 size를 (off_t*) 형태로 바라는 것 같은데, 에러가 떠서 일단 일반 사이즈로 넣음
-
+    // sema_up(&filesys_sema);
     return read_count;
 }
 
@@ -462,6 +469,7 @@ int write(int fd, const void *buffer, unsigned size) {
         return size; // STDOUT
     }
 
+    // sema_down(&filesys_sema);
     struct file *file_to_write = get_file_from_fd(fd);
     if (!file_to_write) {
         return -1; // fd로 파일 가져오기 실패
@@ -472,7 +480,7 @@ int write(int fd, const void *buffer, unsigned size) {
     } // 만일 deny_write라면 실패 반환 (임시, sync_write 등에서 수정 필요할 가능성 높음)
 
     int bytes_written = file_write(file_to_write, buffer, size);
-
+    // sema_up(&filesys_sema);
 
     return bytes_written;
 }
@@ -482,12 +490,13 @@ int write(int fd, const void *buffer, unsigned size) {
    구체적으로는, seek로 read를 할 경우 EoF에서 0을 반환 (시작점), write를 할 경우 파일을 extend해야 함. */
 void seek(int fd, unsigned position) {
 
+    // sema_down(&filesys_sema);
     struct file *file = get_file_from_fd(fd);
     if (!file) {
         return;
     }
-
     file_seek(file, position);
+    // sema_up(&filesys_sema);
 }
 
 /* 열려있는 파일 fd에서 to-be-read 또는 to-be-written인 다음 바이트의 위치를 반환하는 함수 (파일의 시작 위치부터 Offset of Bytes로 표현).  */
@@ -509,7 +518,9 @@ void close(int fd) {
     /* 탐색해서 맞는 fd를 닫음 */
     if (2 <= fd && fd <= 256) {
         lock_acquire(&t->fd_lock);
+        // sema_down(&filesys_sema);
         close_file(fd);
+        // sema_up(&filesys_sema);
         lock_release(&t->fd_lock);
     }
 }
@@ -524,7 +535,7 @@ void close(int fd) {
 int allocate_fd(struct file *file) {
 
     struct thread *t = thread_current(); // user thread는 in the kernel이 된 상태 ; kernel thread가 아님
-
+    // sema_down(&filesys_sema);
     lock_acquire(&t->fd_lock);
     /* init_thread()에서 palloc된 페이지를 탐색, 0으로 채워진 공간을 확보 */
     for (int i = 2; i < 256; i++) { // fd 0과 1번은 stdin stdout 전용이니 건너뛰어야 함 ; palloc 공간은 더 크지만 그냥 fd 개수는 256으로 제한
@@ -535,6 +546,7 @@ int allocate_fd(struct file *file) {
         }
     }
     lock_release(&t->fd_lock);
+    // sema_up(&filesys_sema);
     return -1; // fd allocation에 실패할 경우
 }
 
@@ -565,8 +577,9 @@ void close_file(int fd) {
     struct file *f = get_file_from_fd(fd);
 
     if (f) {
+        
         file_close(f);
-        release_fd(fd);
+        // release_fd(fd);
     }
 }
 

@@ -8,12 +8,20 @@ enum vm_type;
 
 struct file_page {
 	struct file* file;
-	void* init_mmaped_va;
     size_t read_bytes;
     size_t zero_bytes;
     long offset;
     bool writable;
+	void* init_mmaped_va;
     size_t page_cnts;
+
+    // struct file* file;
+    // size_t page_read_bytes;
+    // size_t page_zero_bytes;
+    // off_t offset;
+    // bool writable;
+    // void* init_mapped_va;
+    // size_t page_cnts;
 };
 
 void vm_file_init (void);

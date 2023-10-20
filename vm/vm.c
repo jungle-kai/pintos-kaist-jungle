@@ -12,9 +12,11 @@
 #include "vm/anon.h"
 #include "vm/file.h"
 #include "vm/uninit.h"
+#include "lib/kernel/bitmap.h"
 
 struct list frame_table;
 struct lock page_table_lock;
+
 // #define VM
 // clang-format on
 
@@ -198,9 +200,9 @@ static struct frame *vm_get_victim(void) {
     struct frame *victim = NULL;
 
     /* @@@@@@@@@@ TODO: The policy for eviction is up to you. @@@@@@@@@@*/
-    struct list_elem* frame_elem = list_pop_front(&frame_table);
-    victim = list_entry(frame_elem, struct frame, frame_elem);
-    victim->page = NULL;
+    struct list_elem* e = list_pop_front(&frame_table);
+    victim = list_entry(e, struct frame, frame_elem);
+    // printf("빅팀 구함?: %p\n", victim->kva);
     return victim;
 }
 
@@ -208,10 +210,11 @@ static struct frame *vm_get_victim(void) {
  * Return NULL on error.*/
 /* 한 페이지를 evict하고 그에 대응하는 frame을 리턴한다.
 	에러 발생시 NULL 리턴한다. */
+int cnt = 0;
 static struct frame *vm_evict_frame(void) {
 
     /* vm_get_victim()으로 선정한 페이지를 DRAM에서 쫒아내는 함수. */
-
+    // printf("빅팀 호출횟수: %d\n", cnt++);
     struct frame *victim UNUSED = vm_get_victim(); // evict될 victim frame 하나를 얻어온다.
 
     /* @@@@@@@@@@ TODO: swap out the victim and return the evicted frame. @@@@@@@@@@ */
@@ -227,8 +230,10 @@ static struct frame *vm_evict_frame(void) {
     // else if (page_get_type(victim->page) == VM_FILE) {
 
     // }
+    // printf("페이지 타입: %d\n", page_get_type(victim->page));
+
     if (!swap_out(victim->page)) {
-        PANIC("file didn't swapped out!");
+        PANIC("file didn't swap out!");
     }
 
     return victim;
@@ -250,9 +255,6 @@ static struct frame *vm_get_frame(void) {
     /* @@@@@@@@@@ TODO: Fill this function. @@@@@@@@@@ */
     struct frame* frame = (struct frame*)calloc(1, sizeof(struct frame));
     ASSERT(frame != NULL);
-    if (frame == NULL) {
-        return NULL;
-    }
 
     frame->kva = palloc_get_page(PAL_USER | PAL_ZERO);
 
@@ -329,6 +331,10 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
         // 아예 잘못된 주소(??)에 접근한 경우
         return false;
     }
+
+    // if (page_get_type(page) == VM_FILE) {
+    //     swap_in(page, page.)
+    // }
 
     // 그 외의 경우. 일단 파일여부 저장
     bool is_file = page->uninit.type == VM_FILE ? 1 : 0;
@@ -450,22 +456,6 @@ bool vm_claim_page(void *va UNUSED) {
         return false;
     }
 
-    // // 페이지 구조체 만들고,
-    // page = (struct page*)calloc(1, sizeof(struct page));
-
-    // // 생성 못했으면 false 리턴
-    // if (page == NULL) {
-    //     return false;
-    // }
-
-    // // 페이지 초기화(ANON 타입)
-    // uninit_new(page, va, NULL, VM_ANON, NULL, anon_initializer);
-    // page->writable = true;
-    // // spt에 넣고,
-    // if (!spt_insert_page(&spt, page)) {
-    //     return false;
-    // }
-
     // 해당 페이지 구조체와 frame을 연결시킴
     return vm_do_claim_page(page);
 }
@@ -485,7 +475,7 @@ static bool vm_do_claim_page(struct page *page) {
 
     struct frame *frame = vm_get_frame();
     if (frame == NULL) {
-        return 0;
+        return false;
     }
     list_push_back(&frame_table, &frame->frame_elem);
 
@@ -596,7 +586,7 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED, st
             // char* file_name = thread_current()->parent_is->name;
             // struct file* new_file = filesys_open(file_name);
             // 부모의 aux를 복제
-            if (parent_page->uninit.type != VM_FILE) {
+            if (parent_page->uninit.type != VM_FILE && page_get_type(parent_page) != VM_FILE) {
                 struct file_info* f_info = (struct file_info*)malloc(sizeof(struct file_info));
                 struct file_info* parent_file_info = (struct file_info*)parent_page->uninit.aux;
                 memcpy(f_info, parent_file_info, sizeof(struct file_info));
@@ -662,11 +652,11 @@ page_hash (const struct hash_elem *p_, void *aux UNUSED) {
   return hash_bytes (&p->va, sizeof p->va);
 }
 
-void swap_table_init(struct swap_table *swapt) {
-    // 뭘 기준으로 swap 테이블 정렬 및 찾기? 일단, swap_hash_elem이 페이지에 존재.
-    // swap_hash_elem으로 페이지 찾은 후, 페이지의 주소값 기준으로 찾기 -> page_hash, page_less 그대로 사용
-    // hash_init(&swapt->hash, page_hash, page_less, NULL);
-}
+// void swap_table_init(struct swap_table *swapt) {
+//     // 뭘 기준으로 swap 테이블 정렬 및 찾기? 일단, swap_hash_elem이 페이지에 존재.
+//     // swap_hash_elem으로 페이지 찾은 후, 페이지의 주소값 기준으로 찾기 -> page_hash, page_less 그대로 사용
+//     // hash_init(&swapt->hash, page_hash, page_less, NULL);
+// }
 
 // 그냥 스왑 해시테이블에서만 없애주고, 이후 supplemental_page_table_kill() 할 때,  
 // 각 타입별 destroy 함수 호출되는데, 이때 anon인 경우 모든 자원을 하므로, destructor 함수 부분에 NULL을 넣으면 hash 초기화만 된다. 
@@ -693,6 +683,6 @@ void destroy_swapped_page (struct hash_elem *e, void *aux) {
     // }
 }
 
-void swap_table_kill(struct swap_table *swap_pt) {
-    // hash_destroy(&swap_pt->hash, destroy_swapped_page);
-}
+// void swap_table_kill(struct swap_table *swap_pt) {
+//     // hash_destroy(&swap_pt->hash, destroy_swapped_page);
+// }

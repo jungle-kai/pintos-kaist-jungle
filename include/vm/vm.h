@@ -3,6 +3,7 @@
 #define VM_VM_H
 #include <stdbool.h>
 #include "threads/palloc.h"
+#include "lib/kernel/bitmap.h"
 // clang-format on
 
 enum vm_type {
@@ -124,16 +125,7 @@ struct supplemental_page_table {
 	struct hash hash;
 };
 
-struct swap_slot {
-    struct page* page; // 페이지의 포인터 저장
-    struct hash_elem swap_hash_elem;
-    /**디스크 관련 필드들 필요***/ 
-};
 
-// 슬롯들이 저장됨
-struct swap_table {
-    struct hash hash;
-};
 
 #include "threads/thread.h"
 extern struct list frame_table;
@@ -153,6 +145,6 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
 void vm_dealloc_page(struct page *page);
 bool vm_claim_page(void *va);
 enum vm_type page_get_type(struct page *page);
-void swap_table_init(struct swap_table *swapt);
-void swap_table_kill(struct swap_table *swapt);
+// void swap_table_init(struct swap_table *swapt);
+// void swap_table_kill(struct swap_table *swapt);
 #endif /* VM_VM_H */

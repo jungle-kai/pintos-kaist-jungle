@@ -13,7 +13,7 @@
 
 // #define VM
 // clang-format on
-
+bool file_load_segment(struct page* page, void* aux);
 static bool file_backed_swap_in(struct page *page, void *kva);
 static bool file_backed_swap_out(struct page *page);
 static void file_backed_destroy(struct page *page);
@@ -67,37 +67,42 @@ static bool file_backed_swap_in(struct page *page, void *kva) {
     /* @@@@@@@@@@ TODO @@@@@@@@@@ */
 
     struct file_page *file_page UNUSED = &page->file;
-    // lazyload하기
-    // vm_alloc_page_with_initializer()
-    // mmap_load_segment(file_page->file,file_page->offset, file_page.)
+
+    // free(aux) 안해주기 위해 함수 만듬
+    if (!file_load_segment(page, file_page)) {
+        return false;
+    }
+    return true;
 }
 
 /* Swap out the page by writeback contents to the file. */
 /* 파일을 swap out함 */
+static int cnt = 0;
 static bool file_backed_swap_out(struct page *page) {
-
     /* DRAM에서 해당 페이지를 제거한 뒤 디스크에 변경사항을 저장하는 함수. */
-
+    // printf("파일백드 destroy로 옴?: %d\n", cnt++);
     /* @@@@@@@@@@ TODO @@@@@@@@@@ */
     struct thread* t = thread_current();
     struct file_page *file_page UNUSED = &page->file;
     // dirty 체크 후, 써져있으면 파일에 저장
 
-    // printf("")
         // write된거면
     if (pml4_is_dirty(t->pml4, page->va)) {
         pml4_set_dirty(t->pml4, page->va, 0);
         // 지울 때 쓰기
         if (file_write_at(page->file.file, page->va, page->file.read_bytes, page->file.offset) != page->file.read_bytes) {
+            printf("쓰기 실패함?\n");
             return false;
         }
     }
 
     // 스왑 테이블에 페이지 구조체 넣기 -> file은 스왑테이블 안씀.
 
-    // 스왑 페이지 테이블
     // 해당 물리메모리 영역 초기화
     memset(page->frame->kva, 0, PGSIZE);
+    page->frame->page = NULL;
+    page->frame = NULL;
+
 
     // 페이지테이블 연결 제거(이후, 다시 va에 접근시 page fault 발생 -> 해당 va와 연결된 page 구조체가 일단 스왑 테이블에 있나 확인 -> 없으면 기존로직 수행)
     pml4_clear_page(t->pml4, page->va);
@@ -120,24 +125,26 @@ static void file_backed_destroy(struct page *page) {
     // page 들어오면, 부모페이지 찾아서 다 써주기 + va = NULL로 바꿔주기 + 파일 삭제
     // 이후 클리어 
     
-    
-    // 
-    // write된거면
-    if (pml4_is_dirty(t->pml4, page->va)) {
-        // 지울 때 쓰기
-        file_write_at(page->file.file, page->va, page->file.read_bytes, page->file.offset);
-    }
-
     file_page->file->file_backed_cnts++;
+    // 스왑아웃 안된거만 처리!!
+    if (page->frame != NULL) {
+        // write된거면
+        if (pml4_is_dirty(t->pml4, page->va)) {
+            // 지울 때 쓰기
+            file_write_at(page->file.file, page->va, page->file.read_bytes, page->file.offset);
+        }
+    }
 
     if (page->file.page_cnts == file_page->file->file_backed_cnts) {
         file_close(file_page->file);
     }
 
-    pml4_clear_page(t->pml4, page->va);
-    palloc_free_page(page->frame->kva);
-    hash_delete(&thread_current()->spt, &page->spt_hash_elem);
-    free(page->frame);
+    if (page->frame != NULL) {
+        pml4_clear_page(t->pml4, page->va);
+        palloc_free_page(page->frame->kva);
+        // hash_delete(&thread_current()->spt, &page->spt_hash_elem);
+        free(page->frame);
+    }
 }
 
 /* Do the mmap */
@@ -213,11 +220,19 @@ void do_munmap(void *addr) {
     struct file_info* temp_file_info;
     struct file* origin_file;
 
-    // file 저장 코드
+    // 아직 로드 안됨 or 스왑아웃됨!
     if (origin_page->frame == NULL) {
-        temp_file_info = (struct file_info*)origin_page->uninit.aux;
-        origin_file = temp_file_info->file;
+        if (origin_page->uninit.type == VM_FILE) {
+            temp_file_info = (struct file_info*)origin_page->uninit.aux;
+            origin_file = temp_file_info->file;
+        }
+        // 로딩됐다가 스왑아웃된 페이지!!
+        else if (page_get_type(origin_page) == VM_FILE) {
+            origin_file = origin_page->file.file;
+        }
     }
+
+    // 로드됨!!
     else {
         origin_file = origin_page->file.file;
     }
@@ -247,12 +262,20 @@ void do_munmap(void *addr) {
             }
         }
 
-        // 아직 로딩은 안된거면
+        // 아직 로딩은 안된거 or 스왑아웃된 파일페이지!!
         else {
-            temp_file_info = (struct file_info*)temp_page->uninit.aux;
-            // 파일타입이고, addr에 매핑된 파일과 같은 파일이면 
-            if (temp_page->uninit.type == VM_FILE && (uint64_t)temp_file_info->init_mapped_va == (uint64_t)addr) {
-                spt_remove_page(&t->spt, temp_page);
+            if (temp_page->uninit.type == VM_FILE) {
+                temp_file_info = (struct file_info*)temp_page->uninit.aux;
+                // 파일타입이고, addr에 매핑된 파일과 같은 파일이면 
+                if ((uint64_t)temp_file_info->init_mapped_va == (uint64_t)addr) {
+                    spt_remove_page(&t->spt, temp_page);
+                }
+            }
+            // 스왑아웃된 파일페이지!!
+            else if (page_get_type(temp_page) == VM_FILE) {
+                if ((uint64_t)temp_page->file.init_mmaped_va == (uint64_t)addr) {
+                    spt_remove_page(&t->spt, temp_page);
+                }
             }
             else {
                 break;
@@ -261,72 +284,6 @@ void do_munmap(void *addr) {
         // 다음 페이지 확인
         temp_addr += PGSIZE;
     }
-
-    // spt_remove_page(spt, temp_page)를 하면,
-        // spt에서 page 구조체 빼버림
-        // 페이지 타입별 destroy 함수 호출
-            // uninit인 경우 -> free(page->uninit.aux);
-            // file인 경우 -> dirty bit 기반 파일 변경사항 저장
-        // page 구조체 free
-
-
-    // 로딩 됐나 안됐나 판단
-        // 로딩 됐을 시:
-            // 파일 타입일 시: file 구조체에 적은 mmap 가상주소와 인자로 들어온 addr 비교
-                // 다를 때: No return
-                // 같을 때: for문 돌면서 spt_remove(page) 수행
-            // 파일 타입 아닐 시: No return
-        // 로딩 안됐을 시:
-            // uninit_page->
-
-
-    /* do_mmap의 카운터. */
-
-    /* @@@@@@@@@@ TODO @@@@@@@@@@ */
-    /* addr에서 시작해서 해당 가상페이지가 addr을 시작으로 mmap한 페이지인지 확인*/
-    /* 1. vm_get_type()을 써서 해당 페이지가 file 타입인지 확인
-        2. file타입이면, file_page에 접근해서 fd 확인 후, addr로 구한 페이지의 file_page 확인해서 fd 확인 
-    */
-
-   // page -> uninit-> aux -> file -> fd 구함. addr -> page -> uninit -> aux -> file 구함. 둘이 비교
-
-    /*
-        munmap 구현방법
-        munmap: 인자로 받은 addr에 대해 해당 파일과 매핑되어 있는 모든 페이지 할당 해제
-    */
-
-   // 해당 addr이 
-
-   /****************** 기존 코드 ****************/
-//     struct file* origin_file = ((struct file_info*)origin_page->uninit.aux)->file;
-//     uint64_t va = (uint64_t)addr + PGSIZE;
-//     struct page* temp_page;
-
-//    while (true) {
-//         temp_page = spt_find_page(spt, va);    
-
-//         // 못 찾았으면 break.
-//         if (temp_page == NULL) {
-//             break;
-//         }
-
-//         // 찾았을 때,
-
-//         struct file* temp_file;
-//         // 타입이 vm_file이고, 같은 file에 대한 페이지면 dealloc
-//         if (page_get_type(temp_page) == VM_FILE) {
-//             temp_file = ((struct file_info*)temp_page->uninit.aux)->file;
-//             if (origin_file == temp_file) {
-//                 vm_dealloc_page(temp_page);
-//                 va += PGSIZE;
-//             }
-//             else {
-//                 break;
-//             }
-//         } 
-//    }
-//    vm_dealloc_page(origin_page);
-   /****************** 기존 코드 ****************/
 }
 
 bool check_munmap_va(void* addr) {
@@ -345,9 +302,11 @@ bool check_munmap_va(void* addr) {
     if (origin_page == NULL) {
         return false;
     }
+
     struct file_info* f_info;
-    // origin_page 로딩X -> uninit_page->aux로 판단
+    // origin_page frame 없을 때,
     if (origin_page->frame == NULL) {
+        // uninit_page->aux가 VMFILE이면 아직 로딩 안된 페이지!
         if (origin_page->uninit.type == VM_FILE) {
             f_info = (struct file_info*)origin_page->uninit.aux;
 
@@ -363,8 +322,9 @@ bool check_munmap_va(void* addr) {
                 }
             }
         }
-        else {
-            return false;
+        // 프레임 없는데 uninit.type이 VM_FILE도 아니다? -> 로딩됐다가 스왑아웃된 파일페이지인지 확인!
+        else if (page_get_type(origin_page) == VM_FILE){
+            return true;
         }
     }
 
@@ -423,5 +383,23 @@ static bool mmap_load_segment(struct file *file, long ofs, uint8_t *upage, long 
 
         ofs += page_read_bytes;
     }
+    return true;
+}
+
+bool file_load_segment(struct page* page, void* aux) {
+    uint8_t *kpage = page->frame->kva;
+    struct file_info* f_info = (struct file_info*)aux;
+    struct thread* t = thread_current();
+
+    file_seek(f_info->file, f_info->offset);
+    if (file_read(f_info->file, kpage, f_info->page_read_bytes) != (int)(f_info->page_read_bytes)) {
+        spt_remove_page(&t->spt, page);
+        ASSERT(false && "lazy_load 시 실패");
+        return false;
+    }
+    if (f_info->page_zero_bytes > 0) {
+        memset(kpage + f_info->page_read_bytes, 0, f_info->page_zero_bytes);
+    }
+
     return true;
 }

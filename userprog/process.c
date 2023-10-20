@@ -793,6 +793,7 @@ bool lazy_load_segment(struct page *page, void *aux) {
         spt_remove_page(&t->spt, page);
         // destroy(page);
         // palloc_free_page(kpage);
+        ASSERT(false && "lazy_load 시 실패");
         return false;
     }
     if (f_info->page_zero_bytes > 0) {
