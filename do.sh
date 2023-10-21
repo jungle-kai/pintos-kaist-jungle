@@ -290,5 +290,5 @@ make clean
 make
 cd build
 source ../../activate
-# $SWAP_FILE
-$PAGE_MERGE_SEQ_GDB
+# $SYN_READ
+$PAGE_MERGE_PAR_GDB

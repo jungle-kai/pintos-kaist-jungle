@@ -11,6 +11,7 @@
 #include "userprog/gdt.h"
 #include "userprog/process.h" // 관련 파일 헤더들 전부 연결
 #include "vm/file.h"
+#include "vm/vm.h"
 #include <stdio.h>
 #include <syscall-nr.h>
 
@@ -320,7 +321,9 @@ bool create(const char *file, unsigned initial_size) {
 
     /* filesys.c의 filesys_create 함수 사용 ; 이 함수도 성공시 bool 반환 */
     bool success = false;
+    sema_down(&filesys_sema);
     success = filesys_create(file, initial_size);
+    sema_up(&filesys_sema);
 
     /* 따라서 그냥 그대로 돌려주면 됨 */
     return success;
@@ -336,7 +339,9 @@ bool remove(const char *file) {
 
     /* filesys.c 참고 ; create()와 동일 */
     bool success = false;
+    sema_down(&filesys_sema);
     success = filesys_remove(file);
+    sema_up(&filesys_sema);
 
     return success;
 }
@@ -362,6 +367,7 @@ int open(const char *file) {
     struct file *opened_file;
     opened_file = filesys_open(file); // *file의 주소 file
     if (!opened_file) {
+        sema_up(&filesys_sema);
         return -1;
     }
     sema_up(&filesys_sema);
@@ -572,43 +578,33 @@ void munmap(void *addr) {
         exit(-1);
     }
 
-    /* 페이지가 맞다면 unmap을 위한 준비 */
-    if (page_to_munmap->frame == NULL) {
+    ASSERT(addr == page_to_munmap->va);
 
-        /* frame에 없다면, munmap될 페이지는 mmap으로 uninit상태로 생성된 페이지여야 함 */
-        if (page_to_munmap->uninit.type == VM_FILE) {
+    /* mmap은 했으나 아직 초기화가 안되었을 경우 (Uninit상태) */
+    if (page_to_munmap->uninit.type == VM_FILE) {
 
-            /* 생성 당시 사용된 aux값을 접속 */
-            struct lazy_load_aux *aux = (struct lazy_load_aux *)page_to_munmap->uninit.aux;
+        /* 생성 당시 사용된 aux값을 접속 */
+        struct lazy_load_aux *aux = (struct lazy_load_aux *)page_to_munmap->uninit.aux;
 
-            /* unmap 하려는 주소가 mmap 당시 첫 페이지인지 검증 */
-            if ((uint64_t)addr != (uint64_t)aux->first_page_va) {
-                exit(-1);
-            }
-
-            /* 첫 페이지가 맞다면, 해당 값이 현재 페이지의 va와 동일한지 한번 더 검증  */
-            if ((uint64_t)aux->first_page_va != (uint64_t)page_to_munmap->va) {
-                exit(-1);
-            }
-        } else { /* VM_FILE로 생성된 페이지가 아니니까 */
+        /* 주소 검증 : "addr == page_to_munmap->va"는 성립 ; 페이지의 va가 mmap 당시 첫페이지인지 검증 */
+        if ((uint64_t)page_to_munmap->va != (uint64_t)aux->first_page_va) {
             exit(-1);
         }
-    } else { /* 이미 로딩되어 Frame에 있는 상황 */
-        if (page_get_type(page_to_munmap) == VM_FILE) {
+    }
+    /* Uninit이 아니라면 Swap out 또는 in-frame 상태 (두 상태 모두 확인해야 할 조건들이 같음) */
+    else if (page_get_type(page_to_munmap) == VM_FILE) {
 
-            /* 위와 마찬가지로, 언매핑 하려던 주소가 기록된 mmap 기준 첫 주소와 동일한지 확인 */
-            if ((uint64_t)addr != (uint64_t)page_to_munmap->file.first_page_va) {
-                exit(-1);
-            }
+        /* 생성 당시 사용된 aux값을 접속 */
+        struct file_page *file_page = &page_to_munmap->file;
 
-            /* 동일하다면, 다시한번 그 값이 현재 언맵하려는 페이지의 va와 같은지 검증 */
-            if ((uint64_t)page_to_munmap->file.first_page_va != (uint64_t)page_to_munmap->va) {
-                exit(-1);
-            }
-
-        } else { /* 프레임에는 있으나 VM_FILE이 아니니까 */
+        /* 주소 검증 : "addr == page_to_munmap->va"는 성립 ; 페이지의 va가 mmap 당시 첫페이지인지 검증 */
+        if ((uint64_t)page_to_munmap->va != (uint64_t)file_page->first_page_va) {
             exit(-1);
         }
+
+    } else { /* 예외케이스 */
+        printf("Some unexpected state ; syscall munmap condition checks failed \n");
+        exit(-1);
     }
 
     /* 여기까지 검증되었으면 됐으니 이제 해당 페이지를 시작으로 unmap 진행 ; 미완성 */

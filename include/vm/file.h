@@ -13,6 +13,7 @@ struct file_page {
     uint32_t zero_bytes;
     bool writable;
     void *first_page_va;
+    size_t mmap_page_count;
 };
 
 void vm_file_init(void);

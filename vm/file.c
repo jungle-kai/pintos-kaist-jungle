@@ -2,6 +2,7 @@
 
 // clang-format off
 #include "vm/vm.h"
+#include "threads/malloc.h"
 #include "userprog/process.h"
 #include "userprog/syscall.h"
 #include "threads/vaddr.h"
@@ -45,6 +46,7 @@ bool file_backed_initializer(struct page *page, enum vm_type type, void *kva) {
 
     /* 원래 포함되어있던 operation으로, page의 function pointer 변경 */
     page->operations = &file_ops;
+    page->initialized_by_file_initializer = true;
 
     /* lazy_load_aux에 담긴 값들을 file_page의 정보로 백업 */
     struct file_page *file_page = &page->file;
@@ -55,6 +57,7 @@ bool file_backed_initializer(struct page *page, enum vm_type type, void *kva) {
     file_page->zero_bytes = aux->zero_bytes;
     file_page->writable = aux->writable;
     file_page->first_page_va = aux->first_page_va;
+    file_page->mmap_page_count = aux->mmap_page_count;
 
     return true;
 }
@@ -68,12 +71,16 @@ static bool file_backed_swap_in(struct page *page, void *kva) {
     off_t offset = file_page->offset;
     uint32_t read_bytes = file_page->read_bytes;
     uint32_t zero_bytes = file_page->zero_bytes;
+    ASSERT((read_bytes + zero_bytes) % PGSIZE == 0)
 
+    /* Swap-out 당시 저장된 파일에서 kva로 값을 복사 */
     int bytes_read = file_read_at(origin_file, kva, read_bytes, offset);
     if (bytes_read != read_bytes) {
+        memset((uint8_t *)kva, 0, PGSIZE);
         return false;
     }
 
+    /* 만일 페이지에 zero bytes가 있었다면 관련 값도 처리 */
     if (zero_bytes > 0) {
         memset((uint8_t *)kva + read_bytes, 0, zero_bytes);
     }
@@ -89,18 +96,22 @@ static bool file_backed_swap_out(struct page *page) {
 
     struct thread *curr = thread_current();
     struct file_page *file_page = &page->file;
-
     struct file *origin_file = file_page->origin_file;
-    uint64_t temp_addr = (uint64_t)page->frame->kva;
 
     if (pml4_is_dirty(curr->pml4, page->va)) {
 
         /* 파일에다가 현재 버퍼 (va)의 내용을 덮어쓰기 (페이지 단위) */
-        off_t bytes_written = file_write_at(origin_file, (void *)temp_addr, page->file.read_bytes + page->file.zero_bytes, page->file.offset);
-        printf("@@@@@ %d bytes written @@@@@ %d address @@@@@ \n", bytes_written, (void *)page->va);
-    }
-    printf("@@@@@ %d address @@@@@ \n", (void *)page->va);
+        off_t bytes_written = file_write_at(origin_file, page->frame->kva, page->file.read_bytes + page->file.zero_bytes, page->file.offset);
+        ASSERT(bytes_written == PGSIZE);
 
+        // /* 수동으로 dirty bit 원래대로 돌리기 (Write하면 MMU가 dirty 체크를 해주지만, 이 경우는 안해줌) */
+        // pml4_set_dirty(curr->pml4, page->va, 0);
+    }
+
+    /* KVA 영역을 0으로 채우기 */
+    memset(page->frame->kva, 0, PGSIZE);
+
+    /* 페이지테이블 연결내역 제거 */
     pml4_clear_page(curr->pml4, page->va);
 
     return true;
@@ -122,6 +133,16 @@ static void file_backed_destroy(struct page *page) {
     } // file_close는 process_exit에서 해줘야 할 것 같음 (fd 접근 어려움)
 
     pml4_clear_page((uint64_t *)curr->pml4, (void *)page->va);
+
+    if (page->frame != NULL) {
+        struct frame_list_elem *e = &page->frame->frame_list_elem;
+        list_remove(e);
+
+        void *kva = page->frame->kva;
+        page->frame->page = NULL;
+        page->frame = NULL;
+        palloc_free_page(kva);
+    }
     // free(page->uninit.aux);
     // free(page->frame->kva);
     // free(page->frame);
@@ -147,7 +168,7 @@ void *do_mmap(void *addr, size_t length, int writable, struct file *file, off_t 
     }
 
     /* 목표 파일을 새로 열어서 기존의 열린 파일들과 분리 (fd는 별도로 안주고 일단 진행해봄) */
-    struct file *reopened_file = file_reopen(file);
+    struct file *reopened_file = file_duplicate(file);
 
     /* Read & Zero-bytes 세팅*/
     uint32_t read_bytes;
@@ -207,20 +228,29 @@ void do_munmap(void *addr) {
 
     /* 해당 페이지와 관련된 파일을 찾아서, */
     struct file *mmap_file = NULL;
-    if (target_page->frame != NULL) { /* 프레임에 로딩된 상태라면 */
-        mmap_file = target_page->file.origin_file;
-    } else { /* 아직 lazy-load 대기중이라면 */
-        struct lazy_load_aux *aux = target_page->uninit.aux;
+    size_t mmap_count;
+
+    struct file_page *file_page = &target_page->file;
+    struct lazy_load_aux *aux = target_page->uninit.aux;
+    bool status = target_page->initialized_by_file_initializer; // anon/file initializer로 초기화될 때 true로 변경
+
+    /* file_page가 있다면 로딩된 상태 */
+    if (status) {
+        mmap_file = file_page->origin_file;
+        mmap_count = file_page->mmap_page_count;
+    } else {
         mmap_file = aux->file;
+        mmap_count = aux->mmap_page_count;
     }
-    if (mmap_file == NULL) {
-        printf("mmap_file not found during do_munmap");
+
+    if (mmap_file == NULL || mmap_count <= 0) {
+        printf("mmap_file not found during do_munmap\n");
         exit(-1);
     }
 
     /* 반복문으로 파일과 관련된 페이지들을 전부 제거 */
     void *temp_addr = addr;
-    while (true) {
+    for (int i = 0; i < mmap_count; i++) {
 
         /* 만일 각 페이지가 dirty로 태그되었다면 (vm_alloc_page_with_initializer() 참고) */
         if (pml4_is_dirty(curr->pml4, temp_addr)) {
@@ -238,14 +268,6 @@ void do_munmap(void *addr) {
 
         /* 커널로 진입했거나, 연속된 페이지가 없다면 반복문 해제 */
         if (is_kernel_vaddr(temp_addr) || target_page == NULL) {
-            break;
-        }
-
-        /* 다음 페이지가 있어도 있어도 파일이 같지 않다면 반복문 해제 */
-        struct lazy_load_aux *aux = (struct lazy_load_aux *)target_page->uninit.aux;
-        if (target_page->frame && target_page->file.origin_file != mmap_file) {
-            break;
-        } else if (target_page->frame == NULL && aux->file != mmap_file) {
             break;
         }
     }
@@ -281,6 +303,7 @@ static bool lazy_load_mmap(struct page *page, void *aux) {
     memset(frame_addr + info->read_bytes, 0, info->zero_bytes);
 
     /* 성공 */
+    aux = NULL;
     free(aux);
     return true;
 }
@@ -292,6 +315,9 @@ static bool load_segment_mmap(struct file *file, off_t ofs, uint8_t *upage, uint
 
     /* aux에 넣어줄 최초의 upage값 백업 */
     uint64_t first_mapped_origin = upage;
+
+    /* aux에 넣어줄 mmap 페이지 수 계산 */
+    size_t page_count = (read_bytes + zero_bytes) / PGSIZE;
 
     while (read_bytes > 0 || zero_bytes > 0) {
 
@@ -312,6 +338,7 @@ static bool load_segment_mmap(struct file *file, off_t ofs, uint8_t *upage, uint
         info->zero_bytes = page_zero_bytes;
         info->writable = writable;
         info->first_page_va = first_mapped_origin; // mmap의 시작점인 첫 페이지를 기록
+        info->mmap_page_count = page_count;
 
         /* 만들어둔 데이터 구조체를 사용해서 페이지 초기화 작업 수행 */
         if (!vm_alloc_page_with_initializer(VM_FILE, upage, writable, lazy_load_mmap, info)) { // WHY NOT VM_FILE

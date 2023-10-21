@@ -94,6 +94,16 @@ static void anon_destroy(struct page *page) {
     struct anon_page *anon_page = &page->anon;
 
     pml4_clear_page((uint64_t *)curr->pml4, (void *)page->va);
+
+    if (page->frame != NULL) {
+        struct frame_list_elem *e = &page->frame->frame_list_elem;
+        list_remove(e);
+
+        void *kva = page->frame->kva;
+        page->frame->page = NULL;
+        page->frame = NULL;
+        palloc_free_page(kva);
+    }
     // free(page->uninit.aux);
     // free(page->frame->kva);
     // free(page->frame);

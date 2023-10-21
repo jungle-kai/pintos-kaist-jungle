@@ -67,6 +67,7 @@
         "stdio.h": "c",
         "intr-stubs.h": "c",
         "bitmap.h": "c",
-        "disk.h": "c"
+        "disk.h": "c",
+        "parallel-merge.h": "c"
     }
 }

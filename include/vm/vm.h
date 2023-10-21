@@ -50,9 +50,11 @@ struct page {
     struct frame *frame; /* Back reference for frame */
 
     /* 구현 영역 */
-    struct hash_elem spt_hash_elem;
-    bool writable;
-    enum vm_type PAGE_TYPE;
+    struct hash_elem spt_hash_elem;       // SPT에 넣는 elem
+    bool writable;                        // writable 여부 표기
+    bool initialized_by_file_initializer; // file_initializer로 초기화 할때 true로 변경
+    enum vm_type page_type;               // vm_alloc_with_initializer에서 지정
+    size_t mmap_page_count;               // mmap 시점에 초기화, unmap때 참고
 
     /* Per-type data are binded into the union.
      * Each function automatically detects the current union */
@@ -96,6 +98,7 @@ struct lazy_load_aux {
     uint32_t zero_bytes;
     bool writable;
     void *first_page_va;
+    size_t mmap_page_count;
 };
 
 // (2) 물리 메모리의 프레임을 기록하는 구조체

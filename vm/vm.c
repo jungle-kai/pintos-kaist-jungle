@@ -144,7 +144,7 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
 
         /* 초기화하는 페이지에 Writable 및 Page Type 저장 (이전의 함수들에서 해주지 않음) */
         new_page->writable = writable;
-        new_page->PAGE_TYPE = type;
+        new_page->page_type = type;
 
         /* 초기화된 페이지를 스레드의 SPT에 삽입 */
         if (!spt_insert_page(spt, new_page)) {
@@ -331,7 +331,7 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
         return false;
     }
 
-    /* (4) 페이지 프레임 확보 */
+    /* (4) 페이지 프레임이 없다면 확보 후 삽입 */
     if (page->frame == NULL) {
 
         /* Write 때문에 Fault가 생겼다면, 성공 표기 하기 전에 dirty로 표시 */
@@ -349,23 +349,6 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
         // FREE ALL RESOURCES (PROCESS EXIT)
         // thread_sleep(100);
     }
-
-    /* Locate the page that faulted in the supplemental page table.
-       If the memory reference is valid, use the supplemental page table entry to locate the data that goes in the page,
-       which might be in the file system, or in a swap slot, or it might simply be an all-zero page.
-
-       If you implement sharing (i.e., Copy-on-Write), the page's data might even already be in a page frame, but not in the page table.
-       If the supplemental page table indicates that the user process should not expect any data at the address it was trying to access,
-       or if the page lies within kernel virtual memory, or if the access is an attempt to write to a read-only page,
-       then the access is invalid. Any invalid access terminates the process and thereby frees all of its resources.
-
-       Obtain a frame to store the page. If you implement sharing, the data you need may already be in a frame,
-       in which case you must be able to locate that frame.
-
-       Fetch the data into the frame, by reading it from the file system or swap, zeroing it, etc.
-       If you implement sharing, the page you need may already be in a frame, in which case no action is necessary in this step.
-
-       Point the page table entry for the faulting virtual address to the physical page. You can use the functions in threads/mmu.c. */
 }
 
 /* Free the page. DO NOT MODIFY THIS FUNCTION. */
@@ -460,7 +443,7 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst, struct su
         /* 먼저 부모의 Page 구조체를 확보하고, 새로운 페이지를 만들기 (단순히 페이지 복사가 아닌 복제니까) */
         /* 단, 부모의 페이지 타입이 VM_FILE이면 MMAP이기 때문에 건너뛰고 카피해야 함 (mmap은 카피하지 않음) */
         struct page *parent_page = hash_entry(i.elem, struct page, spt_hash_elem);
-        if (parent_page->uninit.type == VM_FILE || parent_page->PAGE_TYPE == VM_FILE) {
+        if (parent_page->uninit.type == VM_FILE || parent_page->page_type == VM_FILE) {
             continue;
         }
 
