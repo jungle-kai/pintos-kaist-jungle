@@ -88,7 +88,7 @@ void syscall_handler(struct intr_frame *f) {
 
     int syscall_num = f->R.rax;
     // if (syscall_num != SYS_EXIT) {
-    //     sema_down(&filesys_sema);
+    sema_down(&filesys_sema);
     // }
     switch (syscall_num) {
 
@@ -96,14 +96,17 @@ void syscall_handler(struct intr_frame *f) {
         halt();
 
     case SYS_EXIT:
+        sema_up(&filesys_sema);
         exit(f->R.rdi);
         break;
 
     case SYS_FORK:
         f->R.rax = fork(f->R.rdi, f);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_EXEC:
+        sema_up(&filesys_sema);
         f->R.rax = exec(f->R.rdi);
         if (f->R.rax == -1) {
             exit(-1);
@@ -111,51 +114,63 @@ void syscall_handler(struct intr_frame *f) {
         break;
 
     case SYS_WAIT:
+        sema_up(&filesys_sema);
         f->R.rax = wait(f->R.rdi);
         break;
 
     case SYS_CREATE:
         f->R.rax = create(f->R.rdi, f->R.rsi);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_REMOVE:
         f->R.rax = remove(f->R.rdi);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_OPEN:
         f->R.rax = open(f->R.rdi);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_FILESIZE:
         f->R.rax = filesize(f->R.rdi);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_READ:
         f->R.rax = read(f->R.rdi, f->R.rsi, f->R.rdx);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_WRITE:
         f->R.rax = write(f->R.rdi, f->R.rsi, f->R.rdx);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_SEEK:
         seek(f->R.rdi, f->R.rsi);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_TELL:
         f->R.rax = tell(f->R.rdi);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_CLOSE:
         close(f->R.rdi);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_MMAP:
         f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+        sema_up(&filesys_sema);
         break;
     
     case SYS_MUNMAP:
         munmap(f->R.rdi);
+        sema_up(&filesys_sema);
         break;
 
     default:
@@ -361,7 +376,7 @@ int open(const char *file) {
     }
     /* 파일을 열어보려고 시도하고, 실패시 -1 반환 (struct file 필수) */
     struct file *opened_file;
-    sema_down(&filesys_sema);
+    // sema_down(&filesys_sema);
     opened_file = filesys_open(file); // *file의 주소 file
     // printf("file length: %d", file_length(opened_file)); // 794
     if (!opened_file) {
@@ -382,9 +397,9 @@ int open(const char *file) {
         return -1;
     }
 
-    
+
     /* 여기까지 왔으면 성공했으니 fd값 반환 */
-    sema_up(&filesys_sema);
+    // sema_up(&filesys_sema);
     return fd;
 }
 
