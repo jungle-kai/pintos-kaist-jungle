@@ -361,7 +361,7 @@ int open(const char *file) {
     }
     /* 파일을 열어보려고 시도하고, 실패시 -1 반환 (struct file 필수) */
     struct file *opened_file;
-    // sema_down(&filesys_sema);
+    sema_down(&filesys_sema);
     opened_file = filesys_open(file); // *file의 주소 file
     // printf("file length: %d", file_length(opened_file)); // 794
     if (!opened_file) {
@@ -384,7 +384,7 @@ int open(const char *file) {
 
     
     /* 여기까지 왔으면 성공했으니 fd값 반환 */
-    // sema_up(&filesys_sema);
+    sema_up(&filesys_sema);
     return fd;
 }
 
@@ -518,9 +518,7 @@ void close(int fd) {
     /* 탐색해서 맞는 fd를 닫음 */
     if (2 <= fd && fd <= 256) {
         lock_acquire(&t->fd_lock);
-        // sema_down(&filesys_sema);
         close_file(fd);
-        // sema_up(&filesys_sema);
         lock_release(&t->fd_lock);
     }
 }
@@ -535,7 +533,6 @@ void close(int fd) {
 int allocate_fd(struct file *file) {
 
     struct thread *t = thread_current(); // user thread는 in the kernel이 된 상태 ; kernel thread가 아님
-    // sema_down(&filesys_sema);
     lock_acquire(&t->fd_lock);
     /* init_thread()에서 palloc된 페이지를 탐색, 0으로 채워진 공간을 확보 */
     for (int i = 2; i < 256; i++) { // fd 0과 1번은 stdin stdout 전용이니 건너뛰어야 함 ; palloc 공간은 더 크지만 그냥 fd 개수는 256으로 제한
@@ -546,7 +543,6 @@ int allocate_fd(struct file *file) {
         }
     }
     lock_release(&t->fd_lock);
-    // sema_up(&filesys_sema);
     return -1; // fd allocation에 실패할 경우
 }
 
@@ -579,7 +575,7 @@ void close_file(int fd) {
     if (f) {
         
         file_close(f);
-        // release_fd(fd);
+        release_fd(fd);
     }
 }
 

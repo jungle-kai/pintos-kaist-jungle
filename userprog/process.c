@@ -867,6 +867,7 @@ static bool setup_stack(struct intr_frame *if_) {
 
     if (vm_claim_page(stack_bottom)) {
         if_->rsp = USER_STACK; // stack_bottom은 스택을 확장시켜준 것 뿐이고, 아직 rsp는 USER_STACK이다.
+        thread_current()->stack_bottom = stack_bottom;
         return true;
     }
     return false;

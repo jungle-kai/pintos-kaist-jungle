@@ -294,7 +294,6 @@ static bool vm_handle_wp(struct page *page UNUSED) {
 
 /* Return true on success */
 bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
-    // printf("페이지폴트 주소: %p\n", addr);
     /* Page Fault 발생 시 처음 Invoke 되는 함수.
        Fault 발생 사유에 따라서 어떤 조치가 필요한지 확인하고, 해당 액션을 통해서 페이지를 확보해오는 함수. */
     /* @@@@@@@@@@ TODO: Validate the fault @@@@@@@@@@ */
@@ -304,37 +303,36 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
 
     /* 1. 유효한 페이지 폴트인지 검사 */
     // stack 생각, stack overflow 생각, stack이랑 멀리 떨어졌을 경우, code segment 접근 경우
-    
+    uint64_t rsp = user == 0 ? t->rsp : f->rsp;
+
     // 유저모드인데 접근하면 안되는 주소에 접근한 경우
     if (user && is_kernel_vaddr(addr)) {
         return false;
     }
 
+    // 유저모드인데 쓰기권한 없는곳에 쓰려고 한 경우
     if (user && write && !not_present) {
         return false;
     }
     
     void* rounded_addr = pg_round_down(addr);
-    // printf("ROUNDED 페이지폴트 주소!!: %p\n\n", rounded_addr); 
 
     page = spt_find_page(spt, rounded_addr);
 
-    // printf("fault address: %p\n rounded: %p\n", addr, rounded_addr);
     // spt에 등록조차 되지 않은 경우
     if (page == NULL) {
-        // printf("아직도 여기로 옴?\n");
         // 스택 크기를 늘려야 하는 경우(addr과 rsp 비교)
-        if ((uint64_t)addr < USER_STACK && pg_round_up(addr) >= f->rsp) { // 내일 up한거 돌려라
-            return vm_claim_page(addr);
+          if (STACK_LIMIT < (uint64_t)addr && (uint64_t)addr == rsp && (uint64_t)addr < t->stack_bottom) {
+            if (!vm_claim_page(addr)) {
+                return false;
+            }
+            t->stack_bottom -= PGSIZE;
+            return true;
         }
 
-        // 아예 잘못된 주소(??)에 접근한 경우
+        // 아예 잘못된 주소에 접근한 경우
         return false;
     }
-
-    // if (page_get_type(page) == VM_FILE) {
-    //     swap_in(page, page.)
-    // }
 
     // 그 외의 경우. 일단 파일여부 저장
     bool is_file = page->uninit.type == VM_FILE ? 1 : 0;
@@ -360,59 +358,6 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
     }
 
     return res;
-
-    // page NULL 체크
-    /* 3. page를 가지고 uninit_initialize() 함수 호출.
-        호출시, 페이지 타입별 초기화 함수() -> lazy_load_segment() 호출됨 */ 
-
-    // 유효한 page fault일 때,
-    // page를 claim해서 frame을 만들어 page와 연결
-
-
-    // res = vm_do_claim_page(page);
-    // return res;
-    
-
-    // 이제 uninit_init(page, kva) 해줌.
-    // bogus fault인 경우, 이미 frame이 매핑된 상태이므로 바로 uninit_init() 해줌.
-    // if (res) {
-    //     uninit_init(page, page->frame->kva);
-    //     return true;
-    // }
-    // return false;
-
-    /* 4. bogus 폴트인지 확인
-    (bogus 폴트: 지연 로딩으로 인해 물리 메모리와 매핑되어 있지만 콘텐츠 자체는 물리메모리에 로드되어 있지 않은 경우가 있을 수 있다. 따라서 물리 메모리와 매핑은 되어 있지만, 콘텐츠가 로드되어 있지 않은 경우라면, 콘텐츠를 로드하면 되고, 매핑되지 않은 페이지(PTE_P = 0)라면 유효한 페이지 폴트)
-        - lazy_loading_page인 경우
-        - swap_out_page인 경우
-        - write_protected_page인 경우*/
-
-    // 아직 page와 frame은 매핑되어 있지 않다. vm_initializer()만 호출한 상태이기 때문
-    // 따라서, bogus fault가 아닌 상태(페이지와 프레임이 연결된 상태)와 유효한 페이지 폴트인 상태(연결된 프레임이 없음)을 구분하여 uninit_init() 호출 후, vm_do_claim_page() 호출
-
-
-
-
-    /* @@@@@@@@@@ TODO: Your code goes here @@@@@@@@@@ */
-
-    /* (1) Locate the page that faulted in the supplemental page table.
-       If the memory reference is valid, use the supplemental page table entry to locate the data that goes in the page,
-       which might be in the file system, or in a swap slot, or it might simply be an all-zero page.
-       If you implement sharing (i.e., Copy-on-Write), the page's data might even already be in a page frame, but not in the page table.
-       If the supplemental page table indicates that the user process should not expect any data at the address it was trying to access,
-       or if the page lies within kernel virtual memory, or if the access is an attempt to write to a read-only page,
-       then the access is invalid. Any invalid access terminates the process and thereby frees all of its resources.
-
-       (2) Obtain a frame to store the page. If you implement sharing, the data you need may already be in a frame,
-       in which case you must be able to locate that frame.
-
-       (3) Fetch the data into the frame, by reading it from the file system or swap, zeroing it, etc.
-       If you implement sharing, the page you need may already be in a frame, in which case no action is necessary in this step.
-
-       (4) Point the page table entry for the faulting virtual address to the physical page. You can use the functions in threads/mmu.c. */
-
-    
-    // return vm_do_claim_page(page);
 }
 
 /* Free the page.
