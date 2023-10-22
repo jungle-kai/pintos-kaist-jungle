@@ -381,10 +381,6 @@ int open(const char *file) {
     /* File Descriptor 번호 부여 및 테이블에 삽입 */
     int fd = allocate_fd(opened_file);
 
-    /* debug */
-    // struct thread *curr = thread_current();
-    // printf("@@@@@@@@@@@@@@@@@@@@ %s is opening file fd %d \n", curr->name, fd);
-
     /* File Descriptor Table이 가득차면 그냥 파일 닫기 */
     if (fd == -1) {
         file_close(opened_file);
