@@ -147,7 +147,7 @@ struct thread {
     struct file *running_file;
 
     /* mmap을 위한 lock */
-    struct lock mmap_lock;
+    // struct lock mmap_lock;
 
 #endif
 

@@ -126,6 +126,7 @@ void syscall_handler(struct intr_frame *f) {
         break;
 
     case SYS_OPEN:
+        thread_sleep(300); // TEMPORARY DEBUG STATEMENT (PAGE-MERGE-PAR/STK/MM)
         f->R.rax = open(f->R.rdi);
         break;
 
@@ -380,6 +381,10 @@ int open(const char *file) {
     /* File Descriptor 번호 부여 및 테이블에 삽입 */
     int fd = allocate_fd(opened_file);
 
+    /* debug */
+    // struct thread *curr = thread_current();
+    // printf("@@@@@@@@@@@@@@@@@@@@ %s is opening file fd %d \n", curr->name, fd);
+
     /* File Descriptor Table이 가득차면 그냥 파일 닫기 */
     if (fd == -1) {
         file_close(opened_file);
@@ -442,7 +447,9 @@ int read(int fd, void *buffer, unsigned size) {
     }
 
     /* 전부 확인되었으니 읽어서 읽은 바이트 값 반환 */
+    sema_down(&filesys_sema);
     read_count = file_read(file, buffer, size); // file_read는 size를 (off_t*) 형태로 바라는 것 같은데, 에러가 떠서 일단 일반 사이즈로 넣음
+    sema_up(&filesys_sema);
 
     return read_count;
 }
@@ -555,9 +562,9 @@ void *mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
 
     /* 파일을 찾았다면 mmap 실행 */
     if (file_to_map) {
-        lock_acquire(&curr->mmap_lock);
+        // lock_acquire(&curr->mmap_lock); // 다른 mmap들이 페이지 공간을 먹지 않도록,
         va = do_mmap(addr, length, writable, file_to_map, offset);
-        lock_release(&curr->mmap_lock);
+        // lock_release(&curr->mmap_lock);
     }
 
     /* mmap 시스템콜은 성공시 파일 시작 주소 va를, 실패시 NULL을 반환 */

@@ -312,11 +312,6 @@ void process_exit(void) {
     struct thread *curr = thread_current();
     struct file **table = curr->fd_table;
 
-    /* Debug */
-    if (!curr->parent_is) {
-        printf("%s\n", curr->name);
-    }
-
     /* 열린 파일 전부 닫기*/
     fd_table_close();
 
@@ -493,9 +488,6 @@ static bool load(const char *file_name, struct intr_frame *if_) {
         printf("load: %s: open failed\n", parsed_file_name);
         goto done;
     }
-
-    /* Debug */
-    // printf("CUSTOM MESSAGE : file_name : %s\n", parsed_file_name);
 
     /* Executable File의 헤더를 읽고 검증 */
     if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr || memcmp(ehdr.e_ident, "\177ELF\2\1\1", 7) || ehdr.e_type != 2 || ehdr.e_machine != 0x3E // amd64
