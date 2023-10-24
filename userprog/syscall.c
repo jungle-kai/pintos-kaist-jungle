@@ -92,21 +92,26 @@ void syscall_handler(struct intr_frame *f) {
     // 커널-사이드에서 실행된 결과물을 %rax에 넣어서 반환해야 함
 
     int syscall_num = f->R.rax;
+    sema_down(&filesys_sema);
 
     switch (syscall_num) {
 
     case SYS_HALT:
+        sema_up(&filesys_sema);
         halt();
 
     case SYS_EXIT:
+        sema_up(&filesys_sema);
         exit(f->R.rdi);
         break;
 
     case SYS_FORK:
         f->R.rax = fork(f->R.rdi, f);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_EXEC:
+        sema_up(&filesys_sema);
         f->R.rax = exec(f->R.rdi);
         if (f->R.rax == -1) {
             exit(-1);
@@ -114,52 +119,64 @@ void syscall_handler(struct intr_frame *f) {
         break;
 
     case SYS_WAIT:
+        sema_up(&filesys_sema);
         f->R.rax = wait(f->R.rdi);
         break;
 
     case SYS_CREATE:
         f->R.rax = create(f->R.rdi, f->R.rsi);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_REMOVE:
         f->R.rax = remove(f->R.rdi);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_OPEN:
-        thread_sleep(300); // TEMPORARY DEBUG STATEMENT (PAGE-MERGE-PAR/STK/MM)
+        // thread_sleep(300); // TEMPORARY DEBUG STATEMENT (PAGE-MERGE-PAR/STK/MM)
         f->R.rax = open(f->R.rdi);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_FILESIZE:
         f->R.rax = filesize(f->R.rdi);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_READ:
         f->R.rax = read(f->R.rdi, f->R.rsi, f->R.rdx);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_WRITE:
         f->R.rax = write(f->R.rdi, f->R.rsi, f->R.rdx);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_SEEK:
         seek(f->R.rdi, f->R.rsi);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_TELL:
         f->R.rax = tell(f->R.rdi);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_CLOSE:
         close(f->R.rdi);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_MMAP:
         f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+        sema_up(&filesys_sema);
         break;
 
     case SYS_MUNMAP:
         munmap(f->R.rdi);
+        sema_up(&filesys_sema);
         break;
 
     default:
@@ -322,9 +339,7 @@ bool create(const char *file, unsigned initial_size) {
 
     /* filesys.c의 filesys_create 함수 사용 ; 이 함수도 성공시 bool 반환 */
     bool success = false;
-    sema_down(&filesys_sema);
     success = filesys_create(file, initial_size);
-    sema_up(&filesys_sema);
 
     /* 따라서 그냥 그대로 돌려주면 됨 */
     return success;
@@ -340,9 +355,7 @@ bool remove(const char *file) {
 
     /* filesys.c 참고 ; create()와 동일 */
     bool success = false;
-    sema_down(&filesys_sema);
     success = filesys_remove(file);
-    sema_up(&filesys_sema);
 
     return success;
 }
@@ -364,14 +377,11 @@ int open(const char *file) {
     }
 
     /* 파일을 열어보려고 시도하고, 실패시 -1 반환 (struct file 필수) */
-    sema_down(&filesys_sema);
     struct file *opened_file;
     opened_file = filesys_open(file); // *file의 주소 file
     if (!opened_file) {
-        sema_up(&filesys_sema);
         return -1;
     }
-    sema_up(&filesys_sema);
 
     /* 만일 파일이 실행중이라면 수정 금지 */
     if (strcmp(thread_current()->name, file) == 0) {
@@ -443,9 +453,7 @@ int read(int fd, void *buffer, unsigned size) {
     }
 
     /* 전부 확인되었으니 읽어서 읽은 바이트 값 반환 */
-    sema_down(&filesys_sema);
     read_count = file_read(file, buffer, size); // file_read는 size를 (off_t*) 형태로 바라는 것 같은데, 에러가 떠서 일단 일반 사이즈로 넣음
-    sema_up(&filesys_sema);
 
     return read_count;
 }
@@ -515,13 +523,9 @@ unsigned tell(int fd) {
 /* fd로 대변되는 파일을 닫는 함수. 프로세스의 종료는 관련된 fd를 전부 닫는 효과가 있음 (이 함수를 여러번 호출하는 것과 동일한 효과). */
 void close(int fd) {
 
-    struct thread *t = thread_current();
-
     /* 탐색해서 맞는 fd를 닫음 */
     if (2 <= fd && fd <= 256) {
-        lock_acquire(&t->fd_lock);
         close_file(fd);
-        lock_release(&t->fd_lock);
     }
 }
 
@@ -643,9 +647,14 @@ struct file *get_file_from_fd(int fd) {
 
     struct thread *t = thread_current();
 
+    lock_acquire(&t->fd_lock);
+
     if (fd >= 2 && fd < 256) {
+        lock_release(&t->fd_lock);
+
         return t->fd_table[fd];
     }
+    lock_release(&t->fd_lock);
     return NULL; // Invalid fd
 }
 
@@ -663,11 +672,16 @@ void release_fd(int fd) {
 void close_file(int fd) {
 
     struct file *f = get_file_from_fd(fd);
+    struct thread *t = thread_current();
+
+    lock_acquire(&t->fd_lock);
 
     if (f) {
         file_close(f);
         release_fd(fd);
     }
+
+    lock_release(&t->fd_lock);
 }
 
 /* fd 테이블을 비우고 메모리도 풀어주는 함수 (thread_exit 전에 호출) */
