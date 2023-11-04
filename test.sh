@@ -290,4 +290,4 @@ make clean
 make
 cd build
 source ../../activate
-$SYN_READ
+$COW_SIMPLE_GDB

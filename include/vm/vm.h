@@ -64,7 +64,9 @@ struct page {
 
     /***** 추가한 필드 *****/
     struct hash_elem spt_hash_elem;
+    struct list_elem frame_share_elem;
     bool writable;
+    uint64_t* pml4;
     enum vm_type PAGE_TYPE;
     /***** 추가한 필드 *****/
     
@@ -85,6 +87,8 @@ struct frame {
     void *kva; // kernel virtual address. 커널 가상 주소. palloc_get_page()의 반환값 넣어줌
     struct page *page; // 프레임과 연결된 가상페이지의 보조 page struct
     struct list_elem frame_elem;
+    struct list pages;
+    size_t share_cnt;
 };
 
 

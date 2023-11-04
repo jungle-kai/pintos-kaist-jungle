@@ -129,6 +129,7 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
         // writable 추가
         page->writable = writable;
         page->PAGE_TYPE = type;
+        page->pml4 = thread_current()->pml4;
 		// spt에 있는 해시에 page 추가
         result = spt_insert_page(spt, page);
         // printf("upage: %p, result: %d\n", upage, result);
@@ -264,11 +265,13 @@ static struct frame *vm_get_frame(void) {
         free(frame);
         frame = vm_evict_frame(); // vm_evict_frame() 반환되는 frame은 kva에 이미 물리페이지 주소가 들어있는가? -> 있어야지
     }
+    list_init(&frame->pages);
+    frame->share_cnt = 1;
 
     // 여기까지 나오면 이제 frame에 kva까지 연결된 상태임 -> frame table에 추가
 
     ASSERT(frame != NULL);
-    ASSERT(frame->page == NULL);
+    ASSERT(list_empty(&frame->pages) == true);
     return frame;
 }
 
@@ -309,11 +312,6 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
     if (user && is_kernel_vaddr(addr)) {
         return false;
     }
-
-    // 유저모드인데 쓰기권한 없는곳에 쓰려고 한 경우
-    if (user && write && !not_present) {
-        return false;
-    }
     
     void* rounded_addr = pg_round_down(addr);
 
@@ -332,6 +330,45 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED, bool us
 
         // 아예 잘못된 주소에 접근한 경우
         return false;
+    }
+
+    // 유저모드인데 쓰기권한 없는곳에 쓰려고 할 때,
+    if (user && write && !not_present) {
+        // shared page면,
+        if (page->frame != NULL && page->frame->share_cnt > 1) {
+            // cow 수행
+            // 1. shared_count 1 낮춤
+            page->frame->share_cnt--;
+
+            // 2. frame의 pages에서 자신 제거
+            list_remove(&page->frame_share_elem);
+
+            // 3. 현재 메모리 영역의 writable 복구
+            if (!pml4_set_page(page->pml4, page->va, page->frame->kva, page->writable)) {
+                ASSERT(false && "writable 복구 실패!");
+            };
+
+            // 4. shared_count = 1이면, 남은 페이지의 pte도 원상복구 시킴
+            if (page->frame->share_cnt == 1) {
+                struct list_elem* e = list_front(&page->frame->pages);
+                struct page* last_page = list_entry(e, struct page, frame_share_elem);
+
+                if (!pml4_set_page(last_page->pml4, last_page->va, last_page->frame->kva, last_page->writable)) {
+                    ASSERT(false && "마지막 페이지 writable 복구 실패!");
+                }
+            }
+
+            // 5. do_claim_page() 해서 페이지-프레임 연결
+            if (!vm_do_claim_page(page)) {
+                return false;
+            }
+
+            return true;
+        }
+        // shared page 아니면 잘못된 page fault.
+        else {
+            return false;
+        }
     }
 
     // 그 외의 경우. 일단 파일여부 저장
@@ -405,11 +442,13 @@ bool vm_claim_page(void *va UNUSED) {
     return vm_do_claim_page(page);
 }
 
+// cow할 때, 여기서 문제 터짐 << 고치기
 static bool install_page(void *upage, void *kpage, bool writable) {
     struct thread *t = thread_current();
 
     /* Verify that there's not already a page at that virtual
      * address, then map our page there. */
+    
     return (pml4_get_page(t->pml4, upage) == NULL && pml4_set_page(t->pml4, upage, kpage, writable));
 }
 
@@ -425,7 +464,7 @@ static bool vm_do_claim_page(struct page *page) {
     list_push_back(&frame_table, &frame->frame_elem);
 
     /* Set links */
-    frame->page = page;
+    list_push_back(&frame->pages, &page->frame_share_elem);
     page->frame = frame;
 
     /* @@@@@@@@@@ TODO: Insert page table entry to map page's VA to frame's PA. @@@@@@@@@@ */
@@ -484,28 +523,31 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED, st
                 new_page->writable = parent_page->writable;
 
                 // 일단 frame 얻기
-                struct frame* new_frame = vm_get_frame();
-
-                if (new_frame == NULL) {
-                    return false;
-                }
+                struct frame* new_frame = parent_page->frame;
 
                 // frame과 page 연결
                 new_page->frame = new_frame;
-                new_frame->page = new_page;
+                // new_frame->page = new_page;
+                list_push_back(&new_frame->pages, &new_page->frame_share_elem);
+                new_frame->share_cnt++;
 
                 // 페이지 초기화
                 new_page->uninit.page_initializer(new_page, new_page->uninit.type, new_frame->kva);
+                new_page->pml4 = thread_current()->pml4;
+                // 부모 pte 접근해서 writable false
+                pml4_set_page(parent_page->pml4, parent_page->va, new_frame->kva, false);
+                // 자식 pte 접근해서 writable false
+                pml4_set_page(new_page->pml4, new_page->va, new_frame->kva, false);
 
                 // 부모의 frame으로부터 kva 구한 후, kva에서 PGSIZE만큼 복사
-                memcpy(new_frame->kva, parent_page->frame->kva, PGSIZE);
+                // memcpy(new_frame->kva, parent_page->frame->kva, PGSIZE);
 
                 // 페이지 테이블에 등록
                 // install_page에 writable을 넣어주어야 함
                 // page 구조체에 쓰기여부 넣기?
                 // pml4e_walk로 구할 수 있나?
                 // page 구조체 만들 때 넣어주기.
-                install_page(new_page->va, new_frame->kva, new_page->writable);
+                // install_page(new_page->va, new_frame->kva, new_page->writable);
                 // // vm_do_claim_page(): page를 넣으면, frame을 만들고 연결시키고 lazy_loading까지 해주는 함수.
                 // if (!vm_do_claim_page(new_page)) {
                 //     printf("spt cpy: 페이지-프레임 연결실패!\n");
@@ -540,7 +582,7 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED, st
                 uninit_new(new_page, parent_page->va, parent_page->uninit.init, parent_page->uninit.type, f_info, parent_page->uninit.page_initializer);
 
                 new_page->writable = parent_page->writable;
-
+                new_page->pml4 = thread_current()->pml4;
                 // lazy_load_segment() 호출 전이라 install_page() 해주면 안됨.
                  if (!spt_insert_page(dst, new_page)) {
                     printf("spt cpy: spt 새페이지 insert 실패!\n");
@@ -559,7 +601,6 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED, st
         // }
     }
 
-    // printf("sptcpy: 성공!\n");
     return true;
 
 }
